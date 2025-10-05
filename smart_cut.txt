@@ -1,0 +1,149 @@
+Notes on implementing a "smart cut" which tries to get the speed of -c copy but with accurate cut points.
+
+It seems to generate videos that look fine, but they have errors in them:
+
+$ ffprobe -v error -select_streams v:0 -count_frames -show_entries stream=nb_read_frames -of default=nokey=1:noprint_wrappers=1 smart.mp4
+[hevc @ 0x14f607050] Could not find ref with POC 57
+[hevc @ 0x14f607050] Error constructing the frame RPS.
+[hevc @ 0x14f607050] Could not find ref with POC 57
+[hevc @ 0x14f607050] Error constructing the frame RPS.
+
+So for now I'll leave it unimplemented. Here are the notes on the process.
+
+----------------------------------------------------------------------------------------------------
+
+Test video
+
+ffmpeg -y -f lavfi -i testsrc=d=10:r=60 -vf "drawtext=fontfile=/Library/Fonts/Arial.ttf: text='%{expr\:floor(n+1)}': x=(w-tw)/2: y=(h-th)/2: fontcolor=black: fontsize=50" -c:v libx265 -pix_fmt yuv420p10le -profile:v main10 -crf 16 -preset slow -g 60 -scenecut 0 -tag:v hvc1 original.mp4
+
+Frame rate is 60. Key frames every 1s. Note that around the key frames some frames are duplicated.
+
+ffprobe -v error -select_streams v:0 -count_frames -show_entries stream=nb_read_frames -of default=nokey=1:noprint_wrappers=1 original.mp4
+600
+
+600 frames total.
+
+----------------------------------------------------------------------------------------------------
+
+Example: Trim original.mp4 from 0.5 to 8.5
+
+Strategy: Encode from 0.5 to 1, and from 8 to 8.5. Copy from 1 to 8. Then concatenate the three videos to get a fast,
+frame-accurate cut that is 8s/480 frames long.
+
+*** Precise encoded is 480 frames long, frames 31 to 510
+
+----------------------------------------------------------------------------------------------------
+
+1. Find next keyframe for the start, and previous keyframe for the end
+
+Frames can be stored out-of-order, so sort them. For the start, get the first keyframe after our starting time. For the
+end, get the last keyframe before our ending time.
+
+If this is too slow, we could add something like "-read_intervals 00:00%+20" to search around the start and end
+times. But we might have to refine the start and end of that range to find the keyframe.
+
+$ ffprobe -v error -select_streams v:0 -skip_frame nokey -show_entries frame=pts_time -of csv=p=0 original.mp4 2>/dev/null | sed 's/,.*$//' | sort -n
+0.000000
+1.000000
+2.000000
+3.000000
+4.000000
+5.000000
+6.000000
+7.000000
+8.000000
+9.000000
+
+We want starting keyframe after the presentation timestamp of 0.5 => 1.0
+We want ending keyframe before the presentation timestamp of 8.5 => 8.0
+
+If these are the same, then we have to just re-encode all of it.
+
+So we want to copy between times 1 and 8
+
+----------------------------------------------------------------------------------------------------
+
+2. Stream copy the middle on keyframe boundaries
+
+I had to put -to before -i in order to get it to cut at the keyframe boundary. It's all voodoo to me. But this works.
+
+ffmpeg -ss 1 -to 8 -i original.mp4 -c copy -avoid_negative_ts make_zero -strict unofficial copied.mp4
+
+This gets me frames 61 to 483. I'm not sure why we get a few extra frames.
+
+----------------------------------------------------------------------------------------------------
+
+3. Compute encoding parameters
+
+Get the original's video parameters:
+
+ffprobe -v error -select_streams v:0 -show_entries "stream=codec_name,profile,pix_fmt,r_frame_rate" -of default=noprint_wrappers=1:nokey=1 original.mp4
+
+hevc
+Main 10
+yuv420p10le
+60/1
+
+----------------------------------------------------------------------------------------------------
+
+4. Encode the initial and ending parts
+
+codec_name=hevc => libx265
+Main 10 => main10
+
+Add -crf 16 for essentially lossless quality
+Add --preset slow for minimal quality loss. https://scottstuff.net/posts/2025/03/17/benchmarking-ffmpeg-h265/
+
+ffmpeg -i original.mp4 -ss 0.5 -to 1 -c:v libx265 -pix_fmt yuv420p10le -tag:v hvc1 -strict -1 -profile:v main10 -r 60 -an -crf 16 -preset slow pre.mp4
+
+This part is a little tricky, since the middle doesn't end precisely where it should. Additionally, we can get a
+situation where the frame count is 422 (implying a duration of 7.033333), but the video duration is 7.05 (implying 423
+frames). The duration seems to be more reliable.
+
+ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 copied.mp4
+7.050000
+
+Additionally, it looks like we have to add 1 frame for the start to be correct.
+
+1 + 7.0500000 = 8.05
+
+ffmpeg -i original.mp4 -ss 8.05 -to 8.5 -c:v libx265 -pix_fmt yuv420p10le -tag:v hvc1 -strict -1 -profile:v main10 -r 60 -an -crf 16 -preset slow post.mp4
+
+----------------------------------------------------------------------------------------------------
+
+5. Concatenate the segments
+
+mylist.txt:
+file 'pre.mp4'
+file 'copied.mp4'
+file 'post.mp4'
+
+ffmpeg -f concat -safe 0 -i mylist.txt -c copy smart.mp4
+
+----------------------------------------------------------------------------------------------------
+
+6. Extract the original audio
+
+We have to do the audio separately because there are artifacts at the join points if we don't
+
+ffmpeg -i original.mp4 -ss 0.5 -to 8.5 -vn -c:a copy audio-copy.aac
+
+This might be more accurate:
+
+Get the original's audio parameters:
+
+ffprobe -v error -select_streams a:0 -show_entries stream=codec_name,sample_rate,channels,bit_rate -of default=noprint_wrappers=1:nokey=1 original.mp4
+
+aac
+44100
+2
+165816
+
+ffmpeg -i original.mp4 -ss 00:00:04 -vn -c:a aac -ar 44100 -ac 2 -b:a 165816 audio.aac
+
+----------------------------------------------------------------------------------------------------
+
+7. Mux in the audio
+
+ffmpeg -i video.mp4 -i audio.aac -c:v copy -c:a copy -map 0:v -map 1:a output.mp4
+
