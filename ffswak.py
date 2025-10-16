@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 
-import os
-
-DEFAULT_OUTPUT_DIR = os.path.expanduser('~/Pictures/Import')
+DEFAULT_OUTPUT_DIR = '~/Pictures/Import'
 FFMPEG = 'ffmpeg'
 # Implies the container type. Examples: mov, mkv, mp4
 OUTPUT_FILENAME_EXTENSION = 'mp4'
+MAX_DIMENSIONS='1920x1080'
 # Warn if the output file is this percent smaller or less. (Always warn if it's larger.)
 WARNING_THRESHOLD = 10
 # Copy the file if we can (user didn't specify any tranformations), and the size difference is less than this percentage
@@ -16,6 +15,21 @@ INTERLACED_FRAME_SAMPLE = 200
 INTERLACED_THRESHOLD = .6
 # For 10-bit depth
 #REENCODE_THRESHOLD = .15
+
+# Stabilization options. Details are here: https://github.com/georgmartius/vid.stab
+
+# Detection phase options
+VIDSTAB_MINCONTRAST = .1
+# 1-10 with 1 meaning little shakiness. Default 5
+VIDSTAB_SHAKINESS = 8
+
+# Transformation phase options
+# Setting this too high sometimes crops the video more than one would like
+VIDSTAB_SMOOTHING = 20
+# Percentage
+VIDSTAB_ZOOM = 20
+# 0=disabled, 1=strong movements lead to borders, 2=no borders
+VIDSTAB_ZOOM_OPTION = 2
 
 #-----------------------------------------------------------------------------------------------------------------------
 
@@ -35,14 +49,13 @@ from rich.traceback import install as install_pretty_exceptions
 
 #-----------------------------------------------------------------------------------------------------------------------
 
+DEFAULT_OUTPUT_DIR = os.path.expanduser(DEFAULT_OUTPUT_DIR)
+
 # Need python 3.7 for ordered dicts
 MIN_PYTHON_MAJOR = 3
 MIN_PYTHON_MINOR = 7
 
-# Check the running Python version
 if sys.version_info < (MIN_PYTHON_MAJOR, MIN_PYTHON_MINOR):
-    # Construct the error message
-    version_string = f""
     sys.exit(f"Error: This script requires Python {MIN_PYTHON_MAJOR}.{MIN_PYTHON_MINOR} or newer. "
              f"You are running Python {sys.version.split(' ')[0]}.")
 
@@ -689,20 +702,14 @@ class Clip:
         if self.video_bitrate is None:
             raise argparse.ArgumentTypeError(f'Cannot stabilize a movie with no video stream.')
 
-        # https://github.com/georgmartius/vid.stab
+        # Detection phase options
+        self.mincontrast = VIDSTAB_MINCONTRAST
+        self.shakiness = VIDSTAB_SHAKINESS
 
-        self.mincontrast = .1
-
-        # 1-10 with 1 meaning little shakiness. Default 5
-        self.shakiness = 8
-
-        # == Transform options ==
-        # Setting this too high sometimes crops the video more than one would like
-        self.smoothing = 20
-        # Percentage
-        self.zoom = 20
-        # 0=disabled, 1=strong movements lead to borders, 2=no borders
-        self.optzoom = 2
+        # Transformation phase options
+        self.smoothing = VIDSTAB_SMOOTHING
+        self.zoom = VIDSTAB_ZOOM
+        self.optzoom = VIDSTAB_ZOOM_OPTION
 
     #-------------------------------------------------------------------------------------------------------------------
 
@@ -824,7 +831,7 @@ def global_options_parser():
         description='General options, and options for the output video.')
 
     global_group.add_argument('-F', '--frame-rate-limit', type=float, default=60.0, help='Maximum frame rate.')
-    global_group.add_argument('-D', '--dimensions-limit', type=dimensions_type, default='1920x1080',
+    global_group.add_argument('-D', '--dimensions-limit', type=dimensions_type, default=MAX_DIMENSIONS,
         help='Maximum dimensions. .5 means 50%% as wide and tall; .5,1 means half as wide, full height; '
           '16:9 means the largest possible video with that aspect ratio; 1280x720 means exactly that size')
     global_group.add_argument('-o', '--output-file',
@@ -1299,12 +1306,14 @@ def build_video_stream_filters(video, clip, kind, skip_stabilization):
     clip.video_filters += compute_rotation(clip)
     clip.video_filters += compute_crop(clip.crop)
     clip.video_filters += compute_reverse(clip.reverse, 'video')
+
     # Force every clip to use the max fps, so that xfade will work. Also normalize the timebase, for the same reason
     clip.video_filters += compute_fps(clip, video.max_avg_frame_rate)
     clip.video_filters += compute_timebase(video)
 
     # Boost red for underwater
 #    clip.video_filters += [ ( 'curves', [], { 'red': '0/.75 .25/1 1/1' } ) ]
+
     clip.video_filters += compute_stabilize(clip, kind, skip_stabilization)
 
     # Now add in the stuff that shouldn't be used for stabilization detection
@@ -1673,6 +1682,8 @@ def build_av_filters(video, kind, skip_stabilization):
 
 #-----------------------------------------------------------------------------------------------------------------------
 
+psutil.Process().nice(10)
+
 TEMPORARY_FILES = []
 
 def cleanup():
@@ -1962,7 +1973,6 @@ def build_encode_command_with_parameters(video, f_previous_video, f_previous_aud
 def build_encode_command(video):
     build_av_filters(video, 'encode', skip_stabilization=False)
 
-#    sys.exit(0)
     dprint('Using ffmpeg-python to build the ffmpeg encode command line')
 
     f_previous_video = build_video_encode_command(video)
@@ -2282,9 +2292,8 @@ def copy_video(video):
 
 #-----------------------------------------------------------------------------------------------------------------------
 
-# I'm declaring that portrait video pillboxed into a landscape video with black bars on the sides is anathema (and
-# vice-versa).  If all the videos are portrait, but the specified width is more than the height, flip them (and
-# vice versa).
+# I'm declaring that no video will have unnecessary black bars. If all the videos are portrait, but the specified width
+# is more than the height, flip them (and vice versa).
 def adjust_video_orientation(video):
     clip_aspect_ratios = {}
 
@@ -2301,12 +2310,14 @@ def adjust_video_orientation(video):
         if clip.filtered_dims.aspect_ratio == 1:
             clip_aspect_ratios['=1'] += 1
 
-    if video.dimensions_limit.width > video.dimensions_limit.height and clip_aspect_ratios['>1'] == 0 and clip_aspect_ratios['<1'] > 0:
+    if video.dimensions_limit.width > video.dimensions_limit.height and clip_aspect_ratios['>1'] == 0 and \
+            clip_aspect_ratios['<1'] > 0:
         cprint(f'[yellow1]WARNING[/]: You specified a landscape width and height of {video.dimensions_limit}, '
             'but none of the videos are landscape. Swapping the height and width.')
         video.dimensions_limit = video.dimensions_limit.swap()
 
-    if video.dimensions_limit.width < video.dimensions_limit.height and clip_aspect_ratios['<1'] == 0 and clip_aspect_ratios['>1'] > 0:
+    if video.dimensions_limit.width < video.dimensions_limit.height and clip_aspect_ratios['<1'] == 0 and \
+            clip_aspect_ratios['>1'] > 0:
         cprint(f'[yellow1]WARNING[/]: You specified a portrait width and height of {video.dimensions_limit}, '
             'but none of the videos are portrait. Swapping the height and width.')
         video.dimensions_limit = video.dimensions_limit.swap()
@@ -2423,8 +2434,6 @@ def compute_output_dimensions(video):
     compute_final_dimensions(video)
 
 #-----------------------------------------------------------------------------------------------------------------------
-
-psutil.Process().nice(10)
 
 video = parse_arguments()
 
