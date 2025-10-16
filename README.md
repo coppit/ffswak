@@ -13,16 +13,11 @@ Things you can do:
 
 # Getting Started
 
-Make sure you have ffmpeg and ffprobe installed:
+Make sure you have ffmpeg and ffprobe installed, and that you have Python 3.7 or newer:
 
 ```sh
 ffmpeg --version
 ffprobe --version
-```
-
-Make sure you're running python 3.7 or newer:
-
-```sh
 python3 --version
 ```
 
@@ -37,6 +32,8 @@ Install the script:
 ```sh
 mkdir -p ~/.local/bin
 ```
+
+Optionally, edit the variables at the top to configure the default output dimensions and default output directory.
 
 Save the script to `~/.local/bin/ffswak.py`.
 
@@ -174,8 +171,8 @@ wrong. e.g. Width and height will be swapped when all the inputs are portrait in
 iPhones produce extra metadata streams. Those get lost if the file is re-encoded, as does lots of metadata tags. Run
 ffprobe on the input and output to compare.
 
-I add features as I need them. Feel free to suggest enhancements at the [https://github.com/coppit/ffswak](github
-project page).
+I add features as I need them. Feel free to suggest enhancements at the
+[github project page](https://github.com/coppit/ffswak).
 
 # Author
 
