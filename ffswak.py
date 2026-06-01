@@ -615,7 +615,12 @@ class Clip:
 
                 self.interlaced = is_interlaced(self.interlace_test, self.input_file)
                 self.input_dims = Dimensions(int(stream['width']), int(stream['height']))
-                self.video_bitrate = int(stream['bit_rate'])
+
+                # mkv files sometimes don't have the per-stream bit rate. Fall back to the overall file's bitrate in
+                # that case.
+                self.video_bitrate = int(stream['bit_rate']) if 'bit_rate' in stream else \
+                        int(probe_result['format']['bit_rate'])
+
                 self.pixel_format = stream['pix_fmt']
 
                 # Parse frame rate
