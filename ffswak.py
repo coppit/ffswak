@@ -1286,7 +1286,7 @@ def encoded_file_not_much_smaller(video):
             f'input size ({humanize.naturalsize(output_size)} > {humanize.naturalsize(input_size)})')
     elif percent_difference < WARNING_THRESHOLD:
         cprint(f'[yellow1]WARNING[/]: Output file size is only {percent_difference:.0f}% smaller than '
-            f'{"estimated" if is_estimate else ""} input size '
+            f'the{" estimated" if is_estimate else ""} input size '
             f'({humanize.naturalsize(output_size)} > {humanize.naturalsize(input_size)})')
 
     return output_size > input_size or percent_difference < COPY_THRESHOLD
