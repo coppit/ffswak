@@ -2277,6 +2277,12 @@ def run_ffmpeg(command, output_file, progress=None, progress_callback=None):
         return_code = process.wait()
 
         if return_code != 0:
+            if progress:
+                # Remove the live display before printing the failure report. Otherwise Rich renders its final progress
+                # row after the report (or leaves the report on the same terminal line as the live display).
+                progress.live.transient = True
+                progress.live.stop()
+
             cprint(f'[red]ffmpeg failed.[/] Command was:')
             print_command(None, command)
 
