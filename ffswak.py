@@ -5,6 +5,13 @@ FFMPEG = 'ffmpeg'
 # Implies the container type. Examples: mov, mkv, mp4
 OUTPUT_FILENAME_EXTENSION = 'mp4'
 MAX_DIMENSIONS='1920x1080'
+# Output formats accepted by the libx265 encoder. Keep this list aligned with the encoder choice in
+# build_encode_command_with_parameters(); a format that ffmpeg can decode is not necessarily one libx265 can encode.
+LIBX265_PIXEL_FORMATS = frozenset({
+    'yuv420p', 'yuv422p', 'yuv444p', 'yuvj420p', 'yuvj422p', 'yuvj444p', 'gbrp', 'gray',
+    'yuv420p10le', 'yuv422p10le', 'yuv444p10le', 'gbrp10le', 'gray10le',
+    'yuv420p12le', 'yuv422p12le', 'yuv444p12le', 'gbrp12le', 'gray12le',
+})
 # Warn if the output file is this percent smaller or less. (Always warn if it's larger.)
 WARNING_THRESHOLD = 10
 # Copy the file if we can (user didn't specify any tranformations), and the size difference is less than this percentage
@@ -411,30 +418,94 @@ class Video(list):
         if not parsed:
             return None
 
-        # Check for matching families
-        families = {p["family"] for p in parsed}
-        if len(families) != 1:
-            if not hasattr(self, '_warned_about_pixel_format'):
-                cprint(f'[yellow1]WARNING[/]: Found mixed pixel families {families}. Converting to the more common '
-                    f'yuv family.')
-                self._warned_about_pixel_format = True
-
-            family = 'yuv'
+        # If every input has the same canonical format, preserve it exactly. This includes harmless layout
+        # canonicalizations such as NV12 -> yuv420p and RGB24 -> gbrp; neither changes chroma sampling or bit depth.
+        output_formats = {p['output_format'] for p in parsed}
+        if len(output_formats) == 1:
+            output_format = output_formats.pop()
         else:
-            family = parsed[0]['family']
+            # Use the richest common representation when all inputs share a color family. Increasing subsampling or
+            # bit depth does not discard samples, although it can increase the encoded file size and encoder workload.
+            families = {p["family"] for p in parsed}
+            if len(families) == 1:
+                family = families.pop()
+            else:
+                # There is no lossless common pixel format for different color families. Convert to YUV because it is
+                # widely supported by libx265. This can lose information: RGB/GBR-to-YUV conversion is quantized, and
+                # full-range YUV (yuvj) must be converted to limited-range YUV when combined with ordinary YUV.
+                if not hasattr(self, '_warned_about_pixel_format'):
+                    cprint(f'[yellow1]WARNING[/]: Found mixed pixel families {families}. Converting to yuv.')
+                    self._warned_about_pixel_format = True
 
-        # Take the maximum of each
-        max_sub = max(p["subsampling"] for p in parsed)
-        max_depth = max(p["depth"] for p in parsed)
-        endian = next((p["endian"] for p in parsed if p["endian"]), "le")
+                family = 'yuv'
 
-        # ffmpeg uses a short name like "yuvj420p" instead of "yuvj420p8le"
-        if max_depth == 8:
-            max_depth = ''
-        if endian == 'le':
-            endian = ''
+            # Take the maximum of each
+            max_sub = max(p["subsampling"] for p in parsed)
+            max_depth = max(p["depth"] for p in parsed)
+            # libx265 uses little-endian storage for high-bit-depth formats. This is a byte-order conversion, not a
+            # bit-depth reduction, so choosing it does not lose image information.
+            endian = 'le' if max_depth > 8 else ''
 
-        return f"{family}{max_sub}p{max_depth}{endian}"
+            # Use the format names libx265 accepts. Its planar GBR and grayscale names omit a subsampling component.
+            if max_depth == 8:
+                max_depth = ''
+
+            if family == 'gbr':
+                output_format = f'gbrp{max_depth}{endian}'
+            elif family == 'gray':
+                output_format = f'gray{max_depth}{endian}'
+            else:
+                output_format = f"{family}{max_sub}p{max_depth}{endian}"
+
+        if output_format in LIBX265_PIXEL_FORMATS:
+            return output_format
+
+        computed_format = parse_pixel_format(output_format)
+
+        # First try to find an encoder-supported format from the same color family.
+        candidates = [ (format_name, parse_pixel_format(format_name)) for format_name in LIBX265_PIXEL_FORMATS
+            if parse_pixel_format(format_name)['family'] == computed_format['family'] ]
+
+        # If that fails, fall back to yuv
+        if not candidates:
+            candidates = [(format_name, parse_pixel_format(format_name))
+                for format_name in LIBX265_PIXEL_FORMATS if parse_pixel_format(format_name)['family'] == 'yuv']
+
+        # Sort the candidates and choose the best. The sort order first avoids chroma downsampling, then avoids
+        # bit-depth reduction, and finally minimizes any remaining layout difference. This fallback can still lose
+        # quality when no supported format retains the requested chroma or bit depth.
+        output_format, selected_format = min(candidates, key=lambda candidate: (
+            max(0, computed_format['subsampling'] - candidate[1]['subsampling']),
+            max(0, computed_format['depth'] - candidate[1]['depth']),
+            abs(computed_format['subsampling'] - candidate[1]['subsampling']),
+            abs(computed_format['depth'] - candidate[1]['depth'])))
+
+        if not hasattr(self, '_warned_about_unsupported_pixel_format'):
+            losses = []
+
+            if computed_format['family'] == 'yuva':
+                if selected_format['family'] != 'yuva':
+                    losses += ['discard alpha']
+            elif selected_format['family'] != computed_format['family']:
+                losses += ['convert the color model']
+            if selected_format['subsampling'] < computed_format['subsampling']:
+                losses += ['reduce chroma detail']
+            if selected_format['depth'] < computed_format['depth']:
+                losses += ['reduce bit depth']
+
+            if losses:
+                if len(losses) == 1:
+                    loss_description = losses[0]
+                elif len(losses) == 2:
+                    loss_description = ' and '.join(losses)
+                else:
+                    loss_description = ', '.join(losses[:-1]) + f', and {losses[-1]}'
+
+                cprint(f'[yellow1]WARNING[/]: libx265 cannot encode {computed_format["output_format"]}. '
+                    f'Using {output_format}, which may {loss_description}.')
+                self._warned_about_unsupported_pixel_format = True
+
+        return output_format
 
     #-------------------------------------------------------------------------------------------------------------------
 
@@ -791,20 +862,73 @@ class Clip:
 #-----------------------------------------------------------------------------------------------------------------------
 
 def parse_pixel_format(format_string):
-    pattern = re.compile(r'^([a-z]+)(\d{3})(?:p)?(\d+)?(le|be)?$')
+    # These formats use a packed or semi-planar memory layout. Each maps to a planar libx265 format with the same
+    # color model, chroma sampling, and bit depth, so this canonicalization itself does not reduce quality.
+    packed_formats = {
+        'gray': ('gray', 400, 8, '', 'gray'),
+        'gray10le': ('gray', 400, 10, 'le', 'gray10le'),
+        'gray12le': ('gray', 400, 12, 'le', 'gray12le'),
+        'gray16le': ('gray', 400, 16, 'le', 'gray16le'),
+        'gray16be': ('gray', 400, 16, 'be', 'gray16be'),
+        'nv12': ('yuv', 420, 8, '', 'yuv420p'),
+        'nv21': ('yuv', 420, 8, '', 'yuv420p'),
+        'p010le': ('yuv', 420, 10, 'le', 'yuv420p10le'),
+        'p010be': ('yuv', 420, 10, 'be', 'yuv420p10le'),
+        'p016le': ('yuv', 420, 16, 'le', 'yuv420p16le'),
+        'p016be': ('yuv', 420, 16, 'be', 'yuv420p16be'),
+        'yuyv422': ('yuv', 422, 8, '', 'yuv422p'),
+        'uyvy422': ('yuv', 422, 8, '', 'yuv422p'),
+        # RGB/BGR are also 4:4:4. Reordering packed channels into planar GBR does not resample or quantize them.
+        'rgb24': ('gbr', 444, 8, '', 'gbrp'),
+        'bgr24': ('gbr', 444, 8, '', 'gbrp'),
+        'rgb48le': ('gbr', 444, 16, 'le', 'gbrp16le'),
+        'rgb48be': ('gbr', 444, 16, 'be', 'gbrp16be'),
+        'bgr48le': ('gbr', 444, 16, 'le', 'gbrp16le'),
+        'bgr48be': ('gbr', 444, 16, 'be', 'gbrp16be'),
+    }
+
+    if format_string in packed_formats:
+        family, subs, depth, endian, output_format = packed_formats[format_string]
+        return { 'family': family, 'subsampling': subs, 'depth': depth, 'endian': endian,
+            'output_format': output_format }
+
+    pattern = re.compile(r'^(yuvj?|yuva)(\d{3})p(\d+)?(le|be)?$')
 
     m = pattern.match(format_string)
+
+    if m:
+        family, subs, depth, endian = m.groups()
+        depth = int(depth) if depth else 8
+        endian = endian or ''
+
+        # libx265 accepts little-endian high-bit-depth planes. Byte order is only a memory-layout detail, so
+        # converting big-endian input to little-endian preserves every sample.
+        output_format = format_string if endian != 'be' else \
+            f'{family}{subs}p{depth}le'
+        return {
+            'family': family,
+            'subsampling': int(subs),
+            'depth': depth,
+            'endian': endian,
+            'output_format': output_format
+        }
+
+    m = re.match(r'^gbrp(\d+)?(le|be)?$', format_string)
 
     if not m:
         raise ValueError(f"Unrecognized format: {format_string}")
 
-    family, subs, depth, endian = m.groups()
+    depth, endian = m.groups()
+
+    depth = int(depth) if depth else 8
+    endian = endian or ''
 
     return {
-        "family": family,
-        "subsampling": int(subs),
-        "depth": int(depth) if depth else 8,
-        "endian": endian or ""
+        'family': 'gbr',
+        'subsampling': 444,
+        'depth': depth,
+        'endian': endian,
+        'output_format': f'gbrp{depth}le' if endian == 'be' else format_string
     }
 
 #-----------------------------------------------------------------------------------------------------------------------
@@ -1995,7 +2119,7 @@ def build_encode_command_with_parameters(video, f_previous_video, f_previous_aud
             named_params['strict'] = 'unofficial'
         else:
             # CRF of 20 gave the highest VMAF score on a video directly from my iPhone. Any lower and the size blew
-            # up without improving quality.  ffmpeg -i original.mov -i encoded.mov -lavfi libvmaf -f null
+            # up without improving quality. ffmpeg -i original.mov -i encoded.mov -lavfi libvmaf -f null
             # The best I could do was 83. I'm not sure why.
             named_params['vcodec'] = 'libx265'
             named_params['pix_fmt'] = video.max_pixel_format
