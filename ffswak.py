@@ -589,6 +589,31 @@ class Clip:
 
     #-------------------------------------------------------------------------------------------------------------------
 
+    @staticmethod
+    def _probe_metadata_error(input_file, detail):
+        cprint(f'[red]Cannot use input file "{input_file}"[/]: ffprobe did not provide a valid {detail}.')
+        sys.exit(1)
+
+    #-------------------------------------------------------------------------------------------------------------------
+
+    @staticmethod
+    def _probe_string(value, input_file, description):
+        if not isinstance(value, str) or not value:
+            Clip._probe_metadata_error(input_file, description)
+
+        return value
+
+    #-------------------------------------------------------------------------------------------------------------------
+
+    @staticmethod
+    def _probe_int(value, input_file, description):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            Clip._probe_metadata_error(input_file, description)
+
+    #-------------------------------------------------------------------------------------------------------------------
+
     def _set_attributes(self):
         self.input_dims, self.input_duration, self.creation_time = None, None, None
         self.video_bitrate, self.audio_bitrate, self.avg_frame_rate = None, None, None
@@ -597,8 +622,14 @@ class Clip:
         try:
             probe_result = ffprobe(self.input_file)
 
-            self.input_duration = float(probe_result.get('format', {}).get('duration'))
-            self.creation_time = probe_result.get('format', {}).get('tags', {}).get('creation_time')
+            format_info = probe_result.get('format') or {}
+
+            try:
+                self.input_duration = float(format_info.get('duration'))
+            except (TypeError, ValueError):
+                self._probe_metadata_error(self.input_file, 'format duration')
+
+            self.creation_time = (format_info.get('tags') or {}).get('creation_time')
 
             # Get the streams information
             streams = probe_result.get('streams', [])
@@ -617,23 +648,28 @@ class Clip:
                     continue
 
                 self.interlaced = is_interlaced(self.interlace_test, self.input_file)
-                self.input_dims = Dimensions(int(stream['width']), int(stream['height']))
+                self.input_dims = Dimensions(
+                    self._probe_int(stream.get('width'), self.input_file, 'video width'),
+                    self._probe_int(stream.get('height'), self.input_file, 'video height'))
 
                 # mkv files sometimes don't have the per-stream bit rate. Fall back to the overall file's bitrate in
                 # that case.
-                self.video_bitrate = int(stream['bit_rate']) if 'bit_rate' in stream else \
-                        int(probe_result['format']['bit_rate'])
+                video_bitrate = stream.get('bit_rate', format_info.get('bit_rate'))
+                self.video_bitrate = self._probe_int(video_bitrate, self.input_file, 'video bitrate')
 
-                self.pixel_format = stream['pix_fmt']
+                self.pixel_format = self._probe_string(stream.get('pix_fmt'), self.input_file, 'video pixel format')
 
                 # Parse frame rate
-                fps_str = stream['avg_frame_rate']
+                fps_str = self._probe_string(stream.get('avg_frame_rate'), self.input_file, 'average frame rate')
 
-                if '/' in fps_str:
-                    numerator, denominator = map(int, fps_str.split('/'))
-                    self.avg_frame_rate = Fraction(numerator, denominator)
-                else:
-                    self.avg_frame_rate = float(fps_str)
+                try:
+                    if '/' in fps_str:
+                        numerator, denominator = map(int, fps_str.split('/'))
+                        self.avg_frame_rate = Fraction(numerator, denominator)
+                    else:
+                        self.avg_frame_rate = float(fps_str)
+                except (TypeError, ValueError, ZeroDivisionError):
+                    self._probe_metadata_error(self.input_file, f'frame rate {fps_str!r}')
 
                 # Check for rotation in side data (e.g., from mobile phones)
                 self.presentation_rotation = None
@@ -663,7 +699,7 @@ class Clip:
                 # the encoding process
                 if stream.get('codec_name'):
                     if self.audio_stream_index is None:
-                        self.audio_bitrate = int(stream['bit_rate'])
+                        self.audio_bitrate = self._probe_int(stream.get('bit_rate'), self.input_file, 'audio bitrate')
                         self.audio_stream_index = audio_stream_index
                     else:
                         cprint(f'[yellow1]WARNING[/]: Ignoring additional audio stream #{audio_stream_index} with'
