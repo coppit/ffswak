@@ -774,7 +774,7 @@ class Clip:
                         self.audio_stream_index = audio_stream_index
                     else:
                         cprint(f'[yellow1]WARNING[/]: Ignoring additional audio stream #{audio_stream_index} with'
-                            ' codec {stream.get("codec_name")}.')
+                            f' codec {stream.get("codec_name")}.')
 
                 audio_stream_index += 1
 
