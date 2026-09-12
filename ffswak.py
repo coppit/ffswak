@@ -1701,7 +1701,10 @@ def build_av_filters(video, kind, skip_stabilization):
 
 #-----------------------------------------------------------------------------------------------------------------------
 
-psutil.Process().nice(10)
+try:
+    psutil.Process().nice(10)
+except (psutil.AccessDenied, PermissionError):
+    pass
 
 TEMPORARY_FILES = []
 
