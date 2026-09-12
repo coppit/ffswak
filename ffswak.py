@@ -366,14 +366,14 @@ class Video(list):
 
     @property
     def can_copy_audio(self):
-        if len(self) != 1 or video.max_audio_bitrate is None:
+        if len(self) != 1 or self.max_audio_bitrate is None:
             return False
 
         for clip in self:
             if clip.audio_filters:
                 return False
 
-        if video.max_audio_bitrate > 192 * 1024:
+        if self.max_audio_bitrate > 192 * 1024:
             return False
 
         return True
