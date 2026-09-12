@@ -2210,7 +2210,6 @@ def run_ffmpeg(command, output_file, progress=None, progress_callback=None):
         command,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        universal_newlines=True,
     )
 
     def sigint_handler(signum, frame):
@@ -2234,75 +2233,73 @@ def run_ffmpeg(command, output_file, progress=None, progress_callback=None):
     pipes = { stdout_fd: "stdout", stderr_fd: "stderr", }
     partial_lines = {stdout_fd: '', stderr_fd: ''}
 
-    # Poll the pipes for new data
-    while pipes:
-        ready_to_read, _, _ = select.select(list(pipes.keys()), [], [], 0.1)
+    try:
+        # Keep polling until each pipe reaches EOF. Clearing the pipe list merely because ffmpeg has exited can lose
+        # diagnostic output that the kernel has not reported as readable yet.
+        while pipes:
+            ready_to_read, _, _ = select.select(list(pipes.keys()), [], [], 0.1)
 
-        if not ready_to_read:
-            if process.poll() is not None:
-                # No more data and process is finished, so break
-                pipes.clear()
-                break
-            continue
+            for fd in ready_to_read:
+                # ffmpeg diagnostic text is normally UTF-8, but a malformed filename or third-party codec can emit
+                # arbitrary bytes. Replacement decoding ensures that reporting the original failure cannot fail too.
+                chunk = os.read(fd, 4096).decode('utf-8', errors='replace')
 
-        for fd in ready_to_read:
-            chunk = os.read(fd, 4096).decode('utf-8')
+                if not chunk:
+                    # End of stream
+                    pipes.pop(fd, None)
+                    continue
 
-            if not chunk:
-                # End of stream
-                pipes.pop(fd, None)
-                continue
+                # So that I can process each line of the progress
+                chunk = chunk.replace('\r', '\n')
 
-            # So that I can process each line of the progress
-            chunk = chunk.replace('\r', '\n')
+                partial_lines[fd] += chunk
 
-            partial_lines[fd] += chunk
+                lines = partial_lines[fd].split('\n')
 
-            lines = partial_lines[fd].split('\n')
+                for line in lines[:-1]:
+                    stream_type = pipes[fd]
 
-            for line in lines[:-1]:
-                stream_type = pipes[fd]
+                    # Store the line and its source
+                    full_output_buffer.append((line, stream_type))
 
-                # Store the line and its source
-                full_output_buffer.append((line, stream_type))
+                    # The progress output from ffmpeg is on stderr, so check for that
+                    if progress_callback is not None:
+                        progress_callback(stream_type, line)
 
-                # The progress output from ffmpeg is on stderr, so check for that
-                if progress_callback is not None:
-                    progress_callback(stream_type, line)
+                partial_lines[fd] = lines[-1]
 
-            partial_lines[fd] = lines[-1]
+        # After the process exits, store any unterminated final output line.
+        if partial_lines[stdout_fd]:
+            full_output_buffer.append((partial_lines[stdout_fd], "stdout"))
+        if partial_lines[stderr_fd]:
+            full_output_buffer.append((partial_lines[stderr_fd], "stderr"))
 
-    # After the process exits, read any remaining output
-    if partial_lines[stdout_fd]:
-        full_output_buffer.append((partial_lines[stdout_fd], "stdout"))
-    if partial_lines[stderr_fd]:
-        full_output_buffer.append((partial_lines[stderr_fd], "stderr"))
+        return_code = process.wait()
 
-    return_code = process.wait()
+        if return_code != 0:
+            cprint(f'[red]ffmpeg failed.[/] Command was:')
+            print_command(None, command)
 
-    # Restore the signal handler after the 'with' block
-    signal.signal(signal.SIGINT, original_sigint_handler)
+            cprint(f'[red]Full log:[/]')
+            for line, stream_type in full_output_buffer:
+                if line.endswith('\n'):
+                    line = line[:-1]
 
-    if return_code != 0:
-        cprint(f'[red]ffmpeg failed.[/] Command was:')
-        print_command(None, command)
+                rline = CONSOLE.render_str(line, markup=False, highlight=False)
 
-        cprint(f'[red]Full log:[/]')
-        for line, stream_type in full_output_buffer:
-            if line.endswith('\n'):
-                line = line[:-1]
+                if stream_type == "stdout":
+                    cprint(rline)
+                else:
+                    eprint(rline, style='yellow')
 
-            rline = CONSOLE.render_str(line, markup=False, highlight=False)
+            sys.exit(return_code)
 
-            if stream_type == "stdout":
-                cprint(rline)
-            else:
-                eprint(rline, style='yellow')
-
-        sys.exit(return_code)
-
-    return [ f[0] for f in full_output_buffer if f[1] == 'stdout' ], \
-        [ f[0] for f in full_output_buffer if f[1] == 'stderr' ]
+        return [ f[0] for f in full_output_buffer if f[1] == 'stdout' ], \
+            [ f[0] for f in full_output_buffer if f[1] == 'stderr' ]
+    finally:
+        signal.signal(signal.SIGINT, original_sigint_handler)
+        process.stdout.close()
+        process.stderr.close()
 
 #-----------------------------------------------------------------------------------------------------------------------
 
