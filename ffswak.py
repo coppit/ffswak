@@ -592,6 +592,7 @@ class Clip:
     def _set_attributes(self):
         self.input_dims, self.input_duration, self.creation_time = None, None, None
         self.video_bitrate, self.audio_bitrate, self.avg_frame_rate = None, None, None
+        self.audio_stream_index = None
 
         try:
             probe_result = ffprobe(self.input_file)
@@ -605,6 +606,8 @@ class Clip:
         except ffmpeg.Error as e:
             cprint(f"[red]Error probing file[/]: {e.stderr.decode('utf-8')}")
             sys.exit(1)
+
+        audio_stream_index = 0
 
         for stream in streams:
             if stream.get('codec_type') == 'video':
@@ -655,7 +658,18 @@ class Clip:
                 # optimization. Don't use it to apply any rotation filter!
 
             elif stream['codec_type'] == 'audio' and self.volume != 0:
-                self.audio_bitrate = int(stream['bit_rate'])
+                # Some Apple videos include an APAC spatial-audio stream that ffmpeg can identify but cannot decode.
+                # Choose the first audio stream with a recognized codec, rather than mapping every audio stream during
+                # the encoding process
+                if stream.get('codec_name'):
+                    if self.audio_stream_index is None:
+                        self.audio_bitrate = int(stream['bit_rate'])
+                        self.audio_stream_index = audio_stream_index
+                    else:
+                        cprint(f'[yellow1]WARNING[/]: Ignoring additional audio stream #{audio_stream_index} with'
+                            ' codec {stream.get("codec_name")}.')
+
+                audio_stream_index += 1
 
             if self.video_bitrate is not None and self.audio_bitrate is not None:
                 break
@@ -1853,7 +1867,7 @@ def build_audio_encode_command(video):
         if clip.audio_filters == [] or clip.audio_filters[0][0] != 'anullsrc':
             dprint(f'  - Audio: Using input file {clip.input_file}')
 
-            f_audio = f_input.audio
+            f_audio = f_input[f'a:{clip.audio_stream_index}']
             audio_filters = clip.audio_filters
         else:
             dprint(f'  - Audio: Creating blank audio file')
