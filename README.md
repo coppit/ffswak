@@ -181,3 +181,15 @@ David Coppit `<david@coppit.org>`
 # License
 
 See the file LICENSE for licensing information.
+
+# Development tests
+
+The pytest harness generates synthetic videos, runs the real CLI, and checks
+output pixels, timing, mixed pixel formats, transitions, and stabilization motion.
+See [tests/README.md](tests/README.md) for setup, comparison tolerances, review
+artifacts, and known failures.
+
+```sh
+python3 -m pip install -r requirements-test.txt
+python3 -m pytest
+```
