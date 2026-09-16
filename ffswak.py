@@ -1792,7 +1792,7 @@ def build_audio_stream_filters(video, clip, kind):
 
 def blank_audio(clip):
     return [ ( 'anullsrc', [], { 'sample_rate': 44100, 'channel_layout': 'stereo',
-        'duration': (clip.end-clip.start)*clip.speedup } ) ]
+        'duration': clip.output_duration } ) ]
 
 #-----------------------------------------------------------------------------------------------------------------------
 
@@ -1950,24 +1950,6 @@ def make_blank_1s_video(color=None, size=None, duration=1, rate=None):
 
 #-----------------------------------------------------------------------------------------------------------------------
 
-@lru_cache
-def make_blank_1s_audio(sample_rate=None, channel_layout=None, duration=1):
-    # Force it to be 1s, for speed and disk space
-    duration = 1
-
-    blank_audio_file = make_temp_filename('blank.m4a', extension='.m4a')
-
-    command = ['ffmpeg', '-f', 'lavfi', '-i', f'anullsrc=sample_rate={sample_rate}:channel_layout={channel_layout}',
-        '-t', str(duration), '-c:a', 'aac', '-b:a', '192k', blank_audio_file.name]
-
-    dprint_command('Silent audio command', command)
-
-    run_ffmpeg(command, blank_audio_file.name)
-
-    return blank_audio_file.name
-
-#-----------------------------------------------------------------------------------------------------------------------
-
 def build_video_encode_command(video):
     f_previous_video = None
 
@@ -2026,7 +2008,7 @@ def build_audio_encode_command(video):
         dprint(f'- Building audio pipeline for clip {clip.index}')
 
         # Audio
-        if clip.audio_bitrate is None:
+        if video.max_audio_bitrate is None:
             continue
 
         if clip.audio_filters == [] or clip.audio_filters[0][0] != 'anullsrc':
@@ -2035,15 +2017,16 @@ def build_audio_encode_command(video):
             f_audio = f_input[f'a:{clip.audio_stream_index}']
             audio_filters = clip.audio_filters
         else:
-            dprint(f'  - Audio: Creating blank audio file')
+            dprint(f'  - Audio: Generating silence from a lavfi input')
 
-            # Convert the "anullsrc" input source in a real file because ffmpeg-python doesn't know how to do it in
-            # the filtergraph
-            blank_audio_filename = make_blank_1s_audio(**(clip.audio_filters[0][2]))
-
-            f_audio = ffmpeg.input(blank_audio_filename).audio
-
-            audio_filters = [ ( 'asetpts', [ f'PTS*{clip.output_duration}' ], {} ) ] + clip.audio_filters[1:]
+            # Use anullsrc as a lavfi input (-f lavfi -i anullsrc=...), rather than
+            # constructing a source node inside ffmpeg-python's filtergraph. This
+            # generates the full silent segment without an intermediate audio file.
+            silence = clip.audio_filters[0][2]
+            f_audio = ffmpeg.input(
+                f'anullsrc=r={silence["sample_rate"]}:cl={silence["channel_layout"]}',
+                f='lavfi', t=clip.output_duration).audio
+            audio_filters = clip.audio_filters[1:]
 
         dprint('    - Audio filters:')
         dprint(pformat(audio_filters), prefix='      ')
@@ -2641,15 +2624,21 @@ def compute_output_dimensions(video):
 
 #-----------------------------------------------------------------------------------------------------------------------
 
-video = parse_arguments()
+def main():
+    global video
+    video = parse_arguments()
 
-prepare(video)
+    prepare(video)
 
-cprint(f'[violet]Video will be {video.output_dims}, {in_hms(video.output_duration)}')
+    cprint(f'[violet]Video will be {video.output_dims}, {in_hms(video.output_duration)}')
 
-encode_video(video)
+    encode_video(video)
 
-cprint(f"[violet]Video encoded to {video.output_file}[/]")
+    cprint(f"[violet]Video encoded to {video.output_file}[/]")
 
-if encoded_file_not_much_smaller(video):
-    copy_video(video)
+    if encoded_file_not_much_smaller(video):
+        copy_video(video)
+
+
+if __name__ == "__main__":
+    main()
