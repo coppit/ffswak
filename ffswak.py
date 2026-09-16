@@ -1521,7 +1521,9 @@ def compute_trim(clip, video_or_audio, kind, skip_stabilization=False):
 
     trim_params = {}
 
-    if skip_stabilization or kind == 'prep':
+    # Dimension-only preparation needs one frame, but motion detection must see the
+    # same complete time range that will be passed to vidstabtransform during encoding.
+    if kind == 'prep' and (skip_stabilization or not clip.stabilize):
         trim_params['start_frame'] = 1
         trim_params['end_frame'] = 2
     else:
@@ -2361,6 +2363,25 @@ def run_ffmpeg_with_progress(command, description, output_file, target_seconds, 
 #-----------------------------------------------------------------------------------------------------------------------
 
 def prepare(video):
+    for clip in video:
+        if not clip.stabilize:
+            continue
+
+        # vidstabtransform's smoothing radius covers 2*smoothing+1 frames.
+        # This is a quality warning, not a hard minimum imposed by libvidstab.
+        # A single clip keeps its frames after speedup; multiple clips are resampled.
+        analysis_fps = (clip.avg_frame_rate * clip.speedup if len(video) == 1 else video.max_avg_frame_rate)
+        smoothing_frames = 1 if clip.tripod is not None else 2 * clip.smoothing + 1
+        recommended_frames = max(2, smoothing_frames)
+        recommended_duration = recommended_frames / analysis_fps
+        if clip.output_duration < recommended_duration:
+            cprint(f'[yellow1]WARNING[/]: Clip {clip.index} is too short for the full stabilization '
+                f'window: {clip.output_duration:.2f}s, approximately '
+                f'{clip.output_duration * analysis_fps:.0f} frames; '
+                f'{recommended_frames} frames ({recommended_duration:.2f}s at '
+                f'{float(analysis_fps):.2f} fps) are recommended. '
+                'Stabilization may be ineffective. Consider using a longer clip.')
+
     f_outputs = build_prep_command(video)
     command = ffmpeg.compile(f_outputs)
 
