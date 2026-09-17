@@ -17,6 +17,9 @@ LIBX265_PIXEL_FORMATS = frozenset({
 WARNING_THRESHOLD = 10
 # Copy the file if we can (user didn't specify any tranformations), and the size difference is less than this percentage
 COPY_THRESHOLD = 2
+# A recognized audio stream can omit its bit rate, particularly in Matroska. Zero is a sentinel for that case: it is
+# enough to retain or stream-copy the audio, while a filtered stream is re-encoded at the configured AAC bitrate.
+UNKNOWN_AUDIO_BITRATE = 0
 # Analyze enough frames for mpv's established idet policy to make a meaningful decision. Detection is cached once per
 # input file.
 INTERLACED_FRAME_SAMPLE = 360
@@ -891,7 +894,7 @@ class Clip:
                     self._probe_int(stream.get('height'), self.input_file, 'video height'))
 
                 # mkv files sometimes don't have the per-stream bit rate. Fall back to the overall file's bitrate in
-                # that case.
+                # that case. (It's an overestimate.)
                 video_bitrate = stream.get('bit_rate', format_info.get('bit_rate'))
                 self.video_bitrate = self._probe_int(video_bitrate, self.input_file, 'video bitrate')
 
@@ -937,7 +940,11 @@ class Clip:
                 # the encoding process
                 if stream.get('codec_name'):
                     if self.audio_stream_index is None:
-                        self.audio_bitrate = self._probe_int(stream.get('bit_rate'), self.input_file, 'audio bitrate')
+                        # Matroska files commonly omit per-stream bit rates. Keep the stream without treating the
+                        # container's total bit rate as though it belonged entirely to audio.
+                        audio_bitrate = stream.get('bit_rate')
+                        self.audio_bitrate = UNKNOWN_AUDIO_BITRATE if audio_bitrate is None else self._probe_int(
+                            audio_bitrate, self.input_file, 'audio bitrate')
                         self.audio_stream_index = audio_stream_index
                     else:
                         cprint(f'[yellow1]WARNING[/]: Ignoring additional audio stream #{audio_stream_index} with'

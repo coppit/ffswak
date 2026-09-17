@@ -60,3 +60,19 @@ def test_playable_mkv_without_stream_bitrate_uses_container_fallback(media):
     output = media.process('-R', mkv)
     assert_timeline(media, output, 2, (320, 240))
     assert np.quantile(abs(media.decode(output).astype(float) - media.decode(source)), .99) < 18
+
+
+def test_playable_mkv_without_audio_bitrate_keeps_audio(media):
+    # Matroska commonly omits bit_rate for both streams. Audio must remain selected, copied when unchanged, and
+    # re-encoded when filtered rather than rejecting the input.
+    source = media.mux_audio(media.encode('scene.mov', quadrants()))
+    mkv = media.directory / 'scene.mkv'
+    run(['ffmpeg', '-v', 'error', '-i', source, '-c', 'copy', mkv], cwd=media.directory)
+    assert all('bit_rate' not in stream for stream in media.streams(mkv))
+    output = media.process('-R', mkv)
+    assert_timeline(media, output, 2, (320, 240))
+    assert len([stream for stream in media.streams(output) if stream['codec_type'] == 'audio']) == 1
+    filtered_output = media.process('-v', '.5', mkv, name='filtered.mp4')
+    filtered_audio = [stream for stream in media.streams(filtered_output) if stream['codec_type'] == 'audio']
+    assert len(filtered_audio) == 1
+    assert filtered_audio[0]['codec_name'] == 'aac'
