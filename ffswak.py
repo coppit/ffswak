@@ -927,8 +927,9 @@ class Clip:
 
     def __str__(self):
         speedup_str = '' if self.speedup == 1 else f' {self.speedup}x'
+        time_range = TimeRange(self.end, self.start) if self.reverse else TimeRange(self.start, self.end)
 
-        return f'Clip {self.index} ({os.path.basename(self.input_file)} {TimeRange(self.start, self.end)}{speedup_str})'
+        return f'Clip {self.index} ({os.path.basename(self.input_file)} {time_range}{speedup_str})'
 
 #-----------------------------------------------------------------------------------------------------------------------
 
