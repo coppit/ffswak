@@ -1773,15 +1773,10 @@ def compute_reverse(is_reversed, video_or_audio):
 
 #-----------------------------------------------------------------------------------------------------------------------
 
-# Always return an FPS filter because otherwise we can't cross-fade properly. Even when we don't "need" it because
-# fps == max_avg_frame_rate, xfade will still fail, perhaps due to floating point differences
-# (Example: 29.978449996009257).
+# xfade needs an FPS filter even when each input already has the target rate. A single clip only needs one when -F
+# changes its rate; otherwise preserving an empty filter chain permits the direct-copy path.
 def compute_fps(clip, max_avg_frame_rate):
-# I found that ffmpeg would complain if I didn't always put the frame rate in. Probably floating point errors.
-#    if clip.avg_frame_rate == max_avg_frame_rate:
-#        return []
-
-    if len(video) == 1:
+    if len(video) == 1 and clip.avg_frame_rate == max_avg_frame_rate:
         return []
 
     return [ ( 'fps', [], { 'fps': max_avg_frame_rate } ) ]

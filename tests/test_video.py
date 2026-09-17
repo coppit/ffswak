@@ -47,6 +47,17 @@ def test_per_input_crop_flags(media):
     assert_color(frames[2 * FPS:, 8:-8, 8:-8], COLORS[3])
 
 
+def test_frame_rate_limit_applies_to_a_single_clip(media):
+    source = media.encode('input.mov', quadrants())
+    output = media.process('-F', '12', source)
+    info = media.probe(output)
+    timestamps = np.array([float(frame['best_effort_timestamp_time']) for frame in info['frames']])
+    assert len(timestamps) == 24
+    np.testing.assert_allclose(timestamps, np.arange(24) / 12, atol=1e-4)
+    assert float(info['streams'][0]['duration']) == pytest.approx(2)
+    assert_color(media.decode(output)[:, 8:112, 8:152], COLORS[0])
+
+
 @pytest.mark.parametrize('repeat_filename', [True, False], ids=['repeated-file', 'multiple-ranges'])
 def test_disjoint_ranges_from_same_input(media, repeat_filename):
     # Each second is identifiable, including both seconds that must be omitted.
