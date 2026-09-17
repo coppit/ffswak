@@ -87,10 +87,14 @@ def test_overlapping_ranges_do_not_repeat_source_motion(media):
     np.testing.assert_allclose(centers, 63.5 + np.arange(72), atol=1)
 
 
-def test_odd_dimension_limit_rounds_to_encodable_size(media):
+@pytest.mark.parametrize('limit,expected', [
+    ('161x121', (160, 120)),
+    ('163x123', (162, 122)),
+])
+def test_odd_dimension_limit_rounds_down_to_an_encodable_size(media, limit, expected):
     source = media.encode('landscape.mov', quadrants())
-    output = media.process('-D', '161x121', source)
-    assert_timeline(media, output, 2, (160, 120))
+    output = media.process('-D', limit, source)
+    assert_timeline(media, output, 2, expected)
     frames = media.decode(output)
     for y, x, color in [(30, 40, 0), (30, 120, 1), (90, 40, 2), (90, 120, 3)]:
         assert_color(frames[:, y-8:y+8, x-8:x+8], COLORS[color])

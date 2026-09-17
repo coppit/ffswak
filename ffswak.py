@@ -2725,9 +2725,10 @@ def compute_final_dimensions(video):
 
     dprint(f'Computed maximum output dimensions: {max_width}x{max_height}')
 
-    # Make sure they're even for the encoder
-    max_width = int( round(max_width/2, 0) * 2 )
-    max_height = int( round(max_height/2, 0) * 2 )
+    # Make sure they're even for the encoder without exceeding the requested
+    # maximum dimensions.
+    max_width -= max_width % 2
+    max_height -= max_height % 2
 
     # Set the output dimensions to the maximum of the videos we saw. (Their dimensions are <= the maximum allowed
     # dimensions.)
