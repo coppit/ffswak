@@ -153,3 +153,47 @@ def test_transition_overlap_is_measured_in_source_seconds(media, speed, expected
     assert_timeline(media, output, len(expected)/FPS, (160,120))
     actual = media.decode(output)[:,16:-16,16:-16].mean(axis=(1,2,3))
     np.testing.assert_allclose(actual, expected, atol=4)
+
+
+@pytest.mark.parametrize('transition', [0, .25, .5])
+@pytest.mark.parametrize('speeds', [(1, 2), (2, 1)])
+def test_different_speeds_meet_at_transition_midpoint(media, transition, speeds):
+    # Adjacent requested ranges meet at source time 3. The fade should be
+    # centered there, with each side contributing half a fade at its own speed.
+    a, b = speeds
+    ranges = [(1, 3 + transition*a/2, a), (3 - transition*b/2, 5, b)]
+    assert_different_speed_transition(media, transition, speeds, ['1-3', '3-5'], ranges)
+
+
+@pytest.mark.parametrize('speeds,requested,expected', [
+    # Incoming padding is capped by the file start. Retract the remaining
+    # correction from the outgoing side without trimming either requested range.
+    ((1, 2), ['0-.75', '.25-4'], [(0, 1, 1), (.25, 4, 2)]),
+    # Outgoing padding is capped by the file end: the converse case.
+    ((2, 1), ['1-5.75', '5.25-6'], [(1, 5.75, 2), (5, 6, 1)]),
+    # Requested overlap alone exceeds the desired overlap. Remove all padding,
+    # but preserve the user's overlapping content in both speed orders.
+    ((1, 2), ['1-3', '2-5'], [(1, 3, 1), (2, 5, 2)]),
+    ((2, 1), ['1-3', '2-5'], [(1, 3, 2), (2, 5, 1)]),
+])
+def test_different_speeds_respect_available_transition_padding(media, speeds, requested, expected):
+    assert_different_speed_transition(media, .5, speeds, requested, expected)
+
+
+def assert_different_speed_transition(media, transition, speeds, requested, expected_ranges):
+    values = 40 + np.arange(6 * FPS, dtype=np.uint8)
+    source = media.encode('clock.mov', np.broadcast_to(values[:, None, None, None], (6*FPS, 120, 160, 3)))
+    first, second = [values[round(start*FPS):round(end*FPS):speed].astype(float)
+                     for start, end, speed in expected_ranges]
+    n = round(transition * FPS)
+    if n:
+        weight = np.arange(n) / n
+        expected = np.concatenate([first[:-n], first[-n:]*(1-weight)+second[:n]*weight, second[n:]])
+    else:
+        expected = np.concatenate([first, second])
+    output = media.process('-T', str(transition), '--',
+                           '-p', str(speeds[0]), source, requested[0],
+                           '-p', str(speeds[1]), source, requested[1])
+    assert_timeline(media, output, len(expected)/FPS, (160, 120))
+    actual = media.decode(output)[:, 16:-16, 16:-16].mean(axis=(1, 2, 3))
+    np.testing.assert_allclose(actual, expected, atol=4)

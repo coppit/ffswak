@@ -255,7 +255,7 @@ class Video(list):
     def adjust_clip_durations_for_transitions(self):
         old_time_ranges = [ TimeRange(f.start, f.end) for f in self ]
 
-        dprint('Adjusting clip start and end times for transitions')
+        dprint('Padding clip start and end times for transitions')
 
         for clip in self:
             if clip.index == 0:
@@ -294,32 +294,36 @@ class Video(list):
 
             dprint(f'- After: {prev_clip} --> {clip.transition_duration}s transition --> {clip}')
 
-        # Smooth only forward, adjacent ranges from the same source at the same
-        # speed. Sorting by source time can join unrelated playback neighbors or
-        # turn deliberate repeats/backward/nested edits into one continuous range.
+        # Smooth adjacent ranges from the same source. When two clips are right next to each other, the first clip's
+        # transition can include part of the next clip, and vice versa. This creates a very odd effect. In this case,
+        # shrink the transition between the two clips.
         for prev_clip, clip in zip(self, self[1:]):
             previous_range = old_time_ranges[prev_clip.index]
             current_range = old_time_ranges[clip.index]
-            if clip.input_file != prev_clip.input_file or clip.speedup != prev_clip.speedup:
-                continue
-            if not (previous_range.start < current_range.start and previous_range.end < current_range.end):
+
+            if clip.input_file != prev_clip.input_file or \
+                    not (previous_range.start < current_range.start and previous_range.end < current_range.end):
                 continue
 
-            # Both quantities are source seconds. Never remove requested content:
-            # only retract padding introduced above. With a zero transition both
-            # padding budgets are zero, so this same arithmetic leaves ranges intact.
+            # Align source times at the transition midpoint: each clip travels half the transition duration at its own
+            # speed. Different speeds cannot align throughout the fade, but can meet at its center.  Both quantities are
+            # source seconds. Never remove requested content: only retract padding introduced above. With a zero
+            # transition both padding budgets are zero, so this same arithmetic leaves ranges intact.
             overlap = prev_clip.end - clip.start
-            desired_overlap = clip.transition_duration * clip.speedup
+            combined_speed = prev_clip.speedup + clip.speedup
+            desired_overlap = clip.transition_duration * combined_speed / 2
             end_padding = max(0, prev_clip.end - previous_range.end)
             start_padding = max(0, current_range.start - clip.start)
             adjustment = min(max(0, overlap - desired_overlap), end_padding + start_padding)
-            end_adjustment = min(adjustment / 2, end_padding)
+            # Retract equal output durations where possible, redistributing any
+            # remainder when one side runs out of padding.
+            end_adjustment = min(adjustment * prev_clip.speedup / combined_speed, end_padding)
             start_adjustment = min(adjustment - end_adjustment, start_padding)
             end_adjustment = adjustment - start_adjustment
 
             if adjustment > 0:
-                cprint(f'[yellow1]WARNING[/]: {prev_clip} overlaps with {clip}. Consider merging them.')
-                dprint(f'- Fixing overlap for a smooth transition')
+                cprint(f'[yellow1]WARNING[/]: {prev_clip} is very close to {clip}. Consider merging them.')
+                dprint(f'- Smoothing the transition')
                 dprint(f'  - Before: {prev_clip} --> {clip.transition_duration} s transition --> {clip}')
 
             prev_clip.end -= end_adjustment
