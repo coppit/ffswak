@@ -79,3 +79,77 @@ def test_odd_dimension_limit_rounds_to_encodable_size(media):
     frames = media.decode(output)
     for y, x, color in [(30, 40, 0), (30, 120, 1), (90, 40, 2), (90, 120, 3)]:
         assert_color(frames[:, y-8:y+8, x-8:x+8], COLORS[color])
+
+
+@pytest.mark.parametrize('transition', [0, .25, .5])
+@pytest.mark.parametrize('order', ['repeat', 'repeat-interior', 'backward', 'nested', 'separated-by-other-file'])
+def test_requested_playback_order_survives_transition_adjustment(media, transition, order):
+    # Compare every frame against independently assembled trims and blends. A ramp
+    # identifies source time, so losing/reordering frames cannot hide in a solid scene.
+    seconds = 6
+    values = 40 + np.arange(seconds * FPS, dtype=np.uint8)
+    frames = np.broadcast_to(values[:, None, None, None], (seconds * FPS, 120, 160, 3))
+    source = media.encode('clock.mov', frames)
+    other = media.encode('other.mov', frames)
+    ranges = {
+        'repeat': [(source, 0, 6), (source, 0, 6)],
+        'repeat-interior': [(source, 1, 3), (source, 1, 3)],
+        'backward': [(source, 3, 5), (source, 1, 4)],
+        'nested': [(source, 1, 5), (source, 2, 4)],
+        'separated-by-other-file': [(source, 1, 3), (other, 0, 2), (source, 2, 4)],
+    }[order]
+    args = []
+    clips = []
+    for index, (path, start, end) in enumerate(ranges):
+        args += [path, f'{start}-{end}']
+        extended_start = max(0, start - transition) if index else start
+        extended_end = min(seconds, end + transition) if index < len(ranges)-1 else end
+        clips.append(values[round(extended_start*FPS):round(extended_end*FPS)].astype(float))
+    expected = clips[0]
+    overlap_frames = round(transition * FPS)
+    for clip in clips[1:]:
+        if overlap_frames:
+            fraction = np.arange(overlap_frames) / overlap_frames
+            blend = expected[-overlap_frames:] * (1-fraction) + clip[:overlap_frames] * fraction
+            expected = np.concatenate([expected[:-overlap_frames], blend, clip[overlap_frames:]])
+        else:
+            expected = np.concatenate([expected, clip])
+    output = media.process('-T', str(transition), *args)
+    assert_timeline(media, output, len(expected)/FPS, (160, 120))
+    actual = media.decode(output)[:, 16:-16, 16:-16].mean(axis=(1, 2, 3))
+    np.testing.assert_allclose(actual, expected, atol=4)
+
+
+@pytest.mark.parametrize('transition', [0, .25, .5])
+def test_overlapping_requested_ranges_keep_content_with_zero_and_nonzero_fades(media, transition):
+    # Requested overlap is .5s. These transitions require no additional source
+    # padding after correction; t=0 must concatenate both requested ranges in full.
+    values = 40 + np.arange(6 * FPS, dtype=np.uint8)
+    source = media.encode('clock.mov', np.broadcast_to(values[:, None, None, None], (6*FPS,120,160,3)))
+    first, second = values[24:72].astype(float), values[60:96].astype(float)
+    n = round(transition * FPS)
+    if n:
+        weight = np.arange(n) / n
+        expected = np.concatenate([first[:-n], first[-n:]*(1-weight)+second[:n]*weight, second[n:]])
+    else:
+        expected = np.concatenate([first, second])
+    output = media.process('-T', str(transition), source, '1-3', source, '2.5-4')
+    assert_timeline(media, output, len(expected)/FPS, (160,120))
+    actual = media.decode(output)[:,16:-16,16:-16].mean(axis=(1,2,3))
+    np.testing.assert_allclose(actual, expected, atol=4)
+
+
+@pytest.mark.parametrize('speed,expected_ranges', [(1, [(1,3),(2.5,4)]), (2, [(1,3.25),(2.25,4)])])
+def test_transition_overlap_is_measured_in_source_seconds(media, speed, expected_ranges):
+    # .5 output seconds means 1 source second at 2x. Subtracting the raw transition
+    # duration from source times produces the wrong ranges and output length.
+    values = 40 + np.arange(6 * FPS, dtype=np.uint8)
+    source = media.encode('clock.mov', np.broadcast_to(values[:,None,None,None], (6*FPS,120,160,3)))
+    first, second = [values[round(start*FPS):round(end*FPS):speed].astype(float)
+                     for start,end in expected_ranges]
+    weight = np.arange(12)/12
+    expected = np.concatenate([first[:-12], first[-12:]*(1-weight)+second[:12]*weight, second[12:]])
+    output = media.process('-p', str(speed), source, '1-3', source, '2.5-4')
+    assert_timeline(media, output, len(expected)/FPS, (160,120))
+    actual = media.decode(output)[:,16:-16,16:-16].mean(axis=(1,2,3))
+    np.testing.assert_allclose(actual, expected, atol=4)

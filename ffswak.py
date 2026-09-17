@@ -258,7 +258,7 @@ class Video(list):
         dprint('Adjusting clip start and end times for transitions')
 
         for clip in self:
-            if clip.index == 0 or clip.transition_duration == 0:
+            if clip.index == 0:
                 continue
 
             prev_clip = self[clip.index-1]
@@ -294,24 +294,39 @@ class Video(list):
 
             dprint(f'- After: {prev_clip} --> {clip.transition_duration}s transition --> {clip}')
 
-        # Warn about overlaps
-        sorted_clips = sorted(self, key=lambda c: c.start)
-
-        for i in range(1, len(sorted_clips)):
-            clip = sorted_clips[i]
-            prev_clip = sorted_clips[i - 1]
-
-            if clip.start >= prev_clip.end or clip.input_file != prev_clip.input_file:
+        # Smooth only forward, adjacent ranges from the same source at the same
+        # speed. Sorting by source time can join unrelated playback neighbors or
+        # turn deliberate repeats/backward/nested edits into one continuous range.
+        for prev_clip, clip in zip(self, self[1:]):
+            previous_range = old_time_ranges[prev_clip.index]
+            current_range = old_time_ranges[clip.index]
+            if clip.input_file != prev_clip.input_file or clip.speedup != prev_clip.speedup:
+                continue
+            if not (previous_range.start < current_range.start and previous_range.end < current_range.end):
                 continue
 
-            cprint(f'[yellow1]WARNING[/]: {prev_clip} overlaps with {clip}. Consider merging them.')
+            # Both quantities are source seconds. Never remove requested content:
+            # only retract padding introduced above. With a zero transition both
+            # padding budgets are zero, so this same arithmetic leaves ranges intact.
+            overlap = prev_clip.end - clip.start
+            desired_overlap = clip.transition_duration * clip.speedup
+            end_padding = max(0, prev_clip.end - previous_range.end)
+            start_padding = max(0, current_range.start - clip.start)
+            adjustment = min(max(0, overlap - desired_overlap), end_padding + start_padding)
+            end_adjustment = min(adjustment / 2, end_padding)
+            start_adjustment = min(adjustment - end_adjustment, start_padding)
+            end_adjustment = adjustment - start_adjustment
 
-            dprint(f'- Fixing overlap for a smooth transition')
-            dprint(f'  - Before: {prev_clip} --> {clip.transition_duration} s transition --> {clip}')
-            adjustment = (prev_clip.end - clip.start - clip.transition_duration) / 2
-            prev_clip.end -= adjustment
-            clip.start += adjustment
-            dprint(f'  - After: {prev_clip} --> {clip.transition_duration} s transition --> {clip}')
+            if adjustment > 0:
+                cprint(f'[yellow1]WARNING[/]: {prev_clip} overlaps with {clip}. Consider merging them.')
+                dprint(f'- Fixing overlap for a smooth transition')
+                dprint(f'  - Before: {prev_clip} --> {clip.transition_duration} s transition --> {clip}')
+
+            prev_clip.end -= end_adjustment
+            clip.start += start_adjustment
+
+            if adjustment > 0:
+                dprint(f'  - After: {prev_clip} --> {clip.transition_duration} s transition --> {clip}')
 
         # Report the adjustments
         for clip in self:
