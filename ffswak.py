@@ -563,7 +563,9 @@ class Video(list):
         if output_file is None:
             filenames = [ os.path.splitext(os.path.basename(clip.input_file))[0] for clip in self ]
             merged_filename = '-'.join(filenames)
-            output_file = os.path.join(self.output_dir, f'{merged_filename}.{OUTPUT_FILENAME_EXTENSION}')
+            extension = 'm4a' if self.max_video_bitrate is None and self.max_audio_bitrate is not None \
+                else OUTPUT_FILENAME_EXTENSION
+            output_file = os.path.join(self.output_dir, f'{merged_filename}.{extension}')
         else:
             # os.path.join leaves an absolute requested filename unchanged.
             output_file = os.path.join(self.output_dir, output_file)
@@ -571,6 +573,11 @@ class Video(list):
         output_file = os.path.abspath(output_file)
 
         root, extension = os.path.splitext(output_file)
+        if self.max_video_bitrate is None and self.max_audio_bitrate is not None and extension.lower() != '.m4a':
+            cprint(f'[yellow1]WARNING[/]: Audio-only output. Changing filename extension from {extension} to .m4a.')
+            extension = '.m4a'
+            output_file = f'{root}{extension}'
+
         while os.path.lexists(output_file):
             output_file = f'{root}-{random.randrange(16**3):03x}{extension}'
 
@@ -2331,9 +2338,6 @@ def build_encode_command_with_parameters(video, f_previous_video, f_previous_aud
     if video.output_duration is not None:
         named_params['metadata:g'] = f'creation_time={video.output_creation_time}'
 
-    if f_previous_video is None and f_previous_audio is not None:
-        video.output_file = os.path.splitext(video.output_file)[0] + '.m4a'
-
     # .m4v can contain HEVC in an MP4 container, but FFmpeg's extension guessing
     # selects the legacy iPod muxer, which rejects HEVC. Override only that case.
     if os.path.splitext(video.output_file)[1].lower() == '.m4v':
@@ -2348,7 +2352,7 @@ def build_encode_command(video):
 
     dprint('Using ffmpeg-python to build the ffmpeg encode command line')
 
-    f_previous_video = build_video_encode_command(video)
+    f_previous_video = build_video_encode_command(video) if video.max_video_bitrate is not None else None
     f_previous_audio = build_audio_encode_command(video)
 
     return build_encode_command_with_parameters(video, f_previous_video, f_previous_audio)
@@ -2552,6 +2556,10 @@ def run_ffmpeg_with_progress(command, description, output_file, target_seconds, 
 #-----------------------------------------------------------------------------------------------------------------------
 
 def prepare(video):
+    # Audio-only inputs have no video filters to prepare and no dimensions to calculate.
+    if video.max_video_bitrate is None:
+        return
+
     for clip in video:
         if not clip.stabilize:
             continue
@@ -2808,7 +2816,10 @@ def main():
 
     prepare(video)
 
-    cprint(f'[violet]Video will be {video.output_dims}, {in_hms(video.output_duration)}')
+    if video.max_video_bitrate is None:
+        cprint(f'[violet]Audio will be {in_hms(video.output_duration)}')
+    else:
+        cprint(f'[violet]Video will be {video.output_dims}, {in_hms(video.output_duration)}')
 
     encode_video(video)
 

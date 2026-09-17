@@ -1,9 +1,10 @@
 """Regressions for stream selection, copy eligibility and missing-audio timelines."""
 import subprocess
+import sys
 
 import numpy as np
 import pytest
-from conftest import FPS, run
+from conftest import FPS, ROOT, run
 from test_video import quadrants, assert_timeline, assert_color, COLORS
 
 pytestmark = pytest.mark.integration
@@ -87,6 +88,21 @@ def test_join_with_audio_only_input_creates_a_black_video_segment(media):
     audio = media.audio(output)
     assert rms(segment(audio, .2, 1.8)) < .002
     assert_tone(audio, 2.2, 3.8, 660)
+
+
+def test_audio_only_input_keeps_audio_and_uses_an_audio_container(media):
+    source = media.directory / 'audio-only.m4a'
+    run(['ffmpeg', '-v', 'error', '-y', '-f', 'lavfi', '-i', 'sine=frequency=660:sample_rate=48000:duration=2',
+         '-c:a', 'aac', source], cwd=media.directory)
+    requested_output = media.directory / 'output.mp4'
+    output = requested_output.with_suffix('.m4a')
+    stdout = run([sys.executable, ROOT / 'ffswak.py', '-o', requested_output, '-v', '.5', source], cwd=media.directory)
+    assert b'changing filename extension from .mp4 to .m4a' in stdout
+    assert output.is_file()
+    streams = media.streams(output)
+    assert [stream['codec_type'] for stream in streams] == ['audio']
+    assert_tone(media.audio(output), .2, 1.8, 660)
+    assert rms(segment(media.audio(output), .2, 1.8)) == pytest.approx(.044, abs=.007)
 
 
 @pytest.mark.parametrize('volume', [1, .5])

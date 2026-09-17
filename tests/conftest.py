@@ -122,7 +122,8 @@ class Media:
         run([sys.executable, ROOT / 'ffswak.py', '-o', output, *args], cwd=self.directory)
         assert output.is_file(), f'Missing output: {output}'
         # ffswak preserves richer formats; provide a review copy for those outputs.
-        if self.probe(output)['streams'][0]['pix_fmt'] not in ('yuv420p', 'yuv420p10le'):
+        video_streams = self.probe(output)['streams']
+        if video_streams and video_streams[0]['pix_fmt'] not in ('yuv420p', 'yuv420p10le'):
             self.preview(output)
         return output
 
