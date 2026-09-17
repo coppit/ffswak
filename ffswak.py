@@ -473,6 +473,16 @@ class Video(list):
             if adjustment > 0:
                 dprint(f'  - After: {prev_clip} --> {clip.transition_duration} s transition --> {clip}')
 
+        # xfade and acrossfade cannot run longer than either input. Padding above can often make room for the requested
+        # transition, but clips at file boundaries can still be shorter than it.
+        for prev_clip, clip in zip(self, self[1:]):
+            maximum_transition_duration = min(prev_clip.output_duration, clip.output_duration)
+            if clip.transition_duration > maximum_transition_duration:
+                cprint(f'[yellow1]WARNING[/]: Shortening the transition between clips {prev_clip.index} and '
+                    f'{clip.index} from {clip.transition_duration:.2f} s to {maximum_transition_duration:.2f} s '
+                    'because one of the clips is too short.')
+                clip.transition_duration = maximum_transition_duration
+
         # Report the adjustments
         for clip in self:
             new_time_range = TimeRange(clip.start, clip.end)
@@ -2021,7 +2031,7 @@ def compute_volume(clip):
 #-----------------------------------------------------------------------------------------------------------------------
 
 def build_video_transition(clip, offset):
-    assert(offset > 0)
+    assert(offset >= 0)
 
     if clip.transition_duration == 0:
         clip.video_transition_filter = Filter('concat', [], { 'n': 2, 'v': 1, 'a': 0 })
@@ -2032,7 +2042,7 @@ def build_video_transition(clip, offset):
 #-----------------------------------------------------------------------------------------------------------------------
 
 def build_audio_transition(clip, offset):
-    assert(offset > 0)
+    assert(offset >= 0)
 
     if clip.transition_duration == 0:
         clip.audio_transition_filter = Filter('concat', [], { 'n': 2, 'v': 0, 'a': 1 })

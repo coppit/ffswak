@@ -69,6 +69,18 @@ def test_transition_range_extensions_and_file_boundaries(media, ranges, seconds,
         assert_color(actual[frame:frame+1, 16:-16, 16:-16], COLORS[color])
 
 
+def test_default_transition_is_shortened_for_short_clips(media):
+    # Two eight-frame clips are each shorter than the default half-second fade. The transition must be capped instead
+    # of producing a negative xfade offset.
+    red = media.encode('red.mov', np.broadcast_to(COLORS[0], (8, 240, 320, 3)))
+    blue = media.encode('blue.mov', np.broadcast_to(COLORS[2], (8, 240, 320, 3)))
+    output = media.process(red, blue)
+    assert_timeline(media, output, 8 / FPS, (320, 240))
+    frames = media.decode(output)
+    assert_color(frames[:1, 16:-16, 16:-16], COLORS[0])
+    assert frames[-1, 16:-16, 16:-16, 2].mean() > frames[-1, 16:-16, 16:-16, 0].mean()
+
+
 def test_overlapping_ranges_do_not_repeat_source_motion(media):
     # 1-3 and 2.5-4 overlap. The adjustment should yield one continuous 1-4 span.
     frames = np.zeros((6*FPS, 240, 320, 3), dtype=np.uint8) + 40
