@@ -1701,7 +1701,7 @@ def build_video_stream_filters(video, clip, kind, skip_stabilization):
     clip.video_filters += compute_reverse(clip.reverse, 'video')
 
     # Force every clip to use the max fps, so that xfade will work. Also normalize the timebase, for the same reason
-    clip.video_filters += compute_fps(clip, video.max_avg_frame_rate)
+    clip.video_filters += compute_fps(video, clip, video.max_avg_frame_rate)
     clip.video_filters += compute_timebase(video)
 
     # Boost red for underwater
@@ -1902,7 +1902,7 @@ def compute_reverse(is_reversed, video_or_audio):
 
 # xfade needs an FPS filter even when each input already has the target rate. A single clip only needs one when -F
 # changes its rate; otherwise preserving an empty filter chain permits the direct-copy path.
-def compute_fps(clip, max_avg_frame_rate):
+def compute_fps(video, clip, max_avg_frame_rate):
     if len(video) == 1 and clip.avg_frame_rate == max_avg_frame_rate:
         return []
 
@@ -2182,7 +2182,7 @@ def build_video_encode_command(video):
             f_video = ffmpeg.input(blank_video_filename).video
 
             video_filters = [ ( 'setpts', [ f'PTS*{clip.output_duration}' ], {} ) ] + \
-                    compute_fps(clip, video.max_avg_frame_rate) + compute_timebase(video) + clip.video_filters[1:]
+                    compute_fps(video, clip, video.max_avg_frame_rate) + compute_timebase(video) + clip.video_filters[1:]
 
         dprint('    - Video filters:')
         dprint(pformat(video_filters), prefix='      ')

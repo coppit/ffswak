@@ -85,6 +85,13 @@ def test_dimension_limit_parser_normalizes_every_supported_syntax(app, value, li
     assert (limit.width, limit.height) == (width, height)
 
 
+def test_compute_fps_uses_the_supplied_video_not_module_state(app, monkeypatch):
+    clip = SimpleNamespace(avg_frame_rate=24)
+    monkeypatch.setattr(app, 'video', [object(), object()], raising=False)
+    assert app.compute_fps([clip], clip, 24) == []
+    assert app.compute_fps([clip, object()], clip, 24) == [('fps', [], {'fps': 24})]
+
+
 @pytest.mark.parametrize('seconds,precision,expected', [
     (3.3, 2, '0:03.3'),
     (59.999, 2, '1:00'),
