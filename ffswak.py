@@ -97,6 +97,72 @@ class Dimensions( namedtuple('Dimensions', ['width', 'height']) ):
 
 #-----------------------------------------------------------------------------------------------------------------------
 
+class DimensionLimitType(Enum):
+    PIXELS = 'pixels'
+    RELATIVE = 'relative'
+    ASPECT = 'aspect'
+
+#-----------------------------------------------------------------------------------------------------------------------
+
+class DimensionLimit( namedtuple('DimensionLimit', ['type', 'width', 'height']) ):
+    def __new__(cls, type, width, height):
+        if not isinstance(type, DimensionLimitType):
+            raise TypeError("Dimension limit type must be a DimensionLimitType.")
+        if not isinstance(width, (int, float)) or not isinstance(height, (int, float)):
+            raise TypeError("Dimension limit values must be numbers.")
+        if width <= 0 or height <= 0:
+            raise ValueError("Dimension limit values must be positive.")
+        if type == DimensionLimitType.PIXELS and (not isinstance(width, int) or not isinstance(height, int)):
+            raise TypeError("Pixel dimension limits must be integers.")
+        if type == DimensionLimitType.RELATIVE and not (width <= 1 and height <= 1):
+            raise ValueError("Relative dimension limits must not exceed 1.")
+
+        return super().__new__(cls, type, width, height)
+
+    def __str__(self):
+        separator = {DimensionLimitType.PIXELS: 'x', DimensionLimitType.RELATIVE: ',',
+            DimensionLimitType.ASPECT: ':'}[self.type]
+        return f"{self.width}{separator}{self.height}"
+
+    def __repr__(self):
+        return self.__str__()
+
+    def swap(self):
+        assert(self.type == DimensionLimitType.PIXELS)
+        return DimensionLimit(self.type, self.height, self.width)
+
+    @property
+    def is_orientation_hint(self):
+        return self.type == DimensionLimitType.PIXELS
+
+    def reduce(self, dimensions):
+        if self.type != DimensionLimitType.PIXELS:
+            return dimensions
+
+        width, height = dimensions
+        if width > self.width:
+            height *= self.width / width
+            width = self.width
+        if height > self.height:
+            width *= self.height / height
+            height = self.height
+
+        return Dimensions(int(round(width)), int(round(height)))
+
+    def resolve(self, max_width, max_height):
+        if self.type == DimensionLimitType.ASPECT:
+            scale = min(max_width / self.width, max_height / self.height)
+            max_width, max_height = int(scale * self.width), int(scale * self.height)
+        elif self.type == DimensionLimitType.RELATIVE:
+            max_width, max_height = int(max_width * self.width), int(max_height * self.height)
+
+        max_width -= max_width % 2
+        max_height -= max_height % 2
+
+        return Dimensions(max_width, max_height)
+
+#-----------------------------------------------------------------------------------------------------------------------
+
 class Fraction(FractionBase):
     def __repr__(self):
         return self.__str__() + f' ({float(self)})'
@@ -260,8 +326,8 @@ def dprint(*args, **kwargs):
 
 class Video(list):
     def __init__(self, output_dir, requested_output_file, dimensions_limit, frame_rate_limit):
-        # An explicit filename is relative to cwd unless -O supplies a base.
-        # The configured default directory applies only to generated filenames.
+        # An explicit filename is relative to cwd unless -O supplies a base.  The configured default directory applies
+        # only to generated filenames.
         self.output_dir = output_dir if output_dir is not None else \
             (os.getcwd() if requested_output_file is not None else DEFAULT_OUTPUT_DIR)
         self._requested_output_file = requested_output_file
@@ -1239,10 +1305,23 @@ class ClipArgumentParser(argparse.ArgumentParser):
 
 def dimensions_type(arg_value):
     try:
-        width, height = map(int, arg_value.split('x'))
-        return Dimensions(width, height)
+        if 'x' in arg_value:
+            width, height = map(int, arg_value.split('x'))
+            limit_type = DimensionLimitType.PIXELS
+        elif ':' in arg_value:
+            width, height = map(float, arg_value.split(':'))
+            limit_type = DimensionLimitType.ASPECT
+        elif ',' in arg_value:
+            width, height = map(float, arg_value.split(','))
+            limit_type = DimensionLimitType.RELATIVE
+        else:
+            width = height = float(arg_value)
+            limit_type = DimensionLimitType.RELATIVE
+
+        return DimensionLimit(limit_type, width, height)
     except:
-        raise argparse.ArgumentTypeError(f'Invalid dimensions format: "{arg_value}". Expected format is "1280x720"')
+        raise argparse.ArgumentTypeError(f'Invalid dimensions format: "{arg_value}". Expected format is ".5", '
+            '".5,1", "16:9", or "1280x720"')
 
 #-----------------------------------------------------------------------------------------------------------------------
 
@@ -2616,6 +2695,11 @@ def copy_video(video):
 # I'm declaring that no video will have unnecessary black bars. If all the videos are portrait, but the specified width
 # is more than the height, flip them (and vice versa).
 def adjust_video_orientation(video):
+    # Relative dimensions describe independent scale factors; they are not an orientation hint that should be swapped to
+    # match the inputs.
+    if not video.dimensions_limit.is_orientation_hint:
+        return
+
     clip_aspect_ratios = {}
 
     clip_aspect_ratios = { '>1': 0, '<1': 0, '=1': 0 }
@@ -2648,33 +2732,12 @@ def adjust_video_orientation(video):
 def compute_reduced_clip_dimensions(video):
     clip_dims = []
 
-    # Don't reduce at this point if the max dimensions are relative. Just collect the sizes so that we can compute the
-    # max video size, *then* reduce all the clip dimensions
-    if isinstance(video.dimensions_limit.width, float):
-        for clip in video:
-            if clip.filtered_dims is not None:
-                clip_dims += [ clip.filtered_dims ]
-
-        return clip_dims
-
-    # First compute the reduced dimensions for each clip
     for clip in video:
         if clip.filtered_dims is None:
             continue
 
         old_dims = clip.filtered_dims
-        (width, height) = old_dims
-
-        if width > video.dimensions_limit.width:
-            height *= video.dimensions_limit.width / width
-            width = video.dimensions_limit.width
-
-        # Check the other one too in case both dimensions are over, and the previous adjustment wasn't enough
-        if height > video.dimensions_limit.height:
-            width *= video.dimensions_limit.height / height
-            height = video.dimensions_limit.height
-
-        new_dims = Dimensions( int(round(width, 0)), int(round(height, 0)) )
+        new_dims = video.dimensions_limit.reduce(old_dims)
         clip_dims += [ new_dims ]
 
         if new_dims == old_dims:
@@ -2730,17 +2793,8 @@ def compute_final_dimensions(video):
     max_width -= max_width % 2
     max_height -= max_height % 2
 
-    # Set the output dimensions to the maximum of the videos we saw. (Their dimensions are <= the maximum allowed
-    # dimensions.)
-    if isinstance(video.dimensions_limit.width, float):
-        max_width = int( max_width * video.dimensions_limit.width )
-        max_height = int( max_height * video.dimensions_limit.height )
-
-        dprint(f'Adjusted maximum output dimensions: {max_width}x{max_height} (based on {video.dimensions_limit})')
-    else:
-        dprint(f'Maximum output dimensions: {max_width}x{max_height} (based on {video.dimensions_limit})')
-
-    video.output_dims = Dimensions( max_width, max_height )
+    video.output_dims = video.dimensions_limit.resolve(max_width, max_height)
+    dprint(f'Maximum output dimensions: {video.output_dims} (based on {video.dimensions_limit})')
 
     # Now set the output dimensions
     compute_output_clip_dimensions(video)

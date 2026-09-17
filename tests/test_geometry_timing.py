@@ -100,6 +100,35 @@ def test_odd_dimension_limit_rounds_down_to_an_encodable_size(media, limit, expe
         assert_color(frames[:, y-8:y+8, x-8:x+8], COLORS[color])
 
 
+@pytest.mark.parametrize('limit,expected', [
+    ('.5', (160, 120)),
+    ('.5,1', (160, 240)),
+])
+def test_relative_dimension_limit_scales_each_axis(media, limit, expected):
+    source = media.encode('landscape.mov', quadrants())
+    output = media.process('-D', limit, source)
+    assert_timeline(media, output, 2, expected)
+    frames = media.decode(output)
+    content_height = min(expected[1], expected[0] * 3 // 4)
+    y_offset = (expected[1] - content_height) // 2
+    for y, x, color in [(y_offset + content_height // 4, expected[0] // 4, 0),
+                        (y_offset + content_height // 4, 3 * expected[0] // 4, 1),
+                        (y_offset + 3 * content_height // 4, expected[0] // 4, 2),
+                        (y_offset + 3 * content_height // 4, 3 * expected[0] // 4, 3)]:
+        assert_color(frames[:, y-8:y+8, x-8:x+8], COLORS[color])
+
+
+def test_aspect_ratio_dimension_limit_uses_the_largest_fitting_canvas(media):
+    source = media.encode('landscape.mov', quadrants())
+    output = media.process('-D', '16:9', source)
+    assert_timeline(media, output, 2, (320, 180))
+    frames = media.decode(output)
+    assert_color(frames[:, :, :30], np.zeros(3))
+    assert_color(frames[:, :, -30:], np.zeros(3))
+    for y, x, color in [(45, 100, 0), (45, 220, 1), (135, 100, 2), (135, 220, 3)]:
+        assert_color(frames[:, y-8:y+8, x-8:x+8], COLORS[color])
+
+
 @pytest.mark.parametrize('transition', [0, .25, .5])
 @pytest.mark.parametrize('order', ['repeat', 'repeat-interior', 'backward', 'nested', 'separated-by-other-file'])
 def test_requested_playback_order_survives_transition_adjustment(media, transition, order):

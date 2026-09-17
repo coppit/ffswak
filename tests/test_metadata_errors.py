@@ -73,6 +73,18 @@ def test_audio_copy_decision_uses_its_own_video(app, monkeypatch):
     assert not own.can_copy_audio
 
 
+@pytest.mark.parametrize('value,limit_type,width,height', [
+    ('1280x720', 'PIXELS', 1280, 720),
+    ('.5', 'RELATIVE', .5, .5),
+    ('.5,1', 'RELATIVE', .5, 1),
+    ('16:9', 'ASPECT', 16, 9),
+])
+def test_dimension_limit_parser_normalizes_every_supported_syntax(app, value, limit_type, width, height):
+    limit = app.dimensions_type(value)
+    assert limit.type == app.DimensionLimitType[limit_type]
+    assert (limit.width, limit.height) == (width, height)
+
+
 @pytest.mark.parametrize('seconds,precision,expected', [
     (3.3, 2, '0:03.3'),
     (59.999, 2, '1:00'),
