@@ -73,6 +73,30 @@ def test_audio_copy_decision_uses_its_own_video(app, monkeypatch):
     assert not own.can_copy_audio
 
 
+@pytest.mark.parametrize('seconds,precision,expected', [
+    (3.3, 2, '0:03.3'),
+    (59.999, 2, '1:00'),
+    (0.5, 2, '0:00.5'),
+])
+def test_time_display_rounds_float_artifacts_and_carries(app, seconds, precision, expected):
+    assert app.in_hms(seconds, precision) == expected
+
+
+def test_rich_highlighter_does_not_split_timestamps(app):
+    timestamp = app.Text('0:03.3')
+    ipv6 = app.Text('2001:db8::1')
+    number = app.Text('0.5')
+    highlighter = app.ReprHighlighter()
+
+    highlighter.highlight(timestamp)
+    highlighter.highlight(ipv6)
+    highlighter.highlight(number)
+
+    assert timestamp.spans == []
+    assert any(span.style == 'repr.ipv6' for span in ipv6.spans)
+    assert any(span.style == 'repr.number' for span in number.spans)
+
+
 def test_subprocess_output_drains_both_pipes_and_retains_partial_lines(app):
     # b89aac7: exceed the read buffer, emit invalid UTF-8, end without newline, and exit fast.
     code = "import os; os.write(1, b'x'*20000+b'\\ntail'); os.write(2, b'progress\\rdiagnostic\\xff')"

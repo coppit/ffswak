@@ -173,13 +173,25 @@ enable_pretty_exceptions()
 
 #-----------------------------------------------------------------------------------------------------------------------
 
-# Monkey patch the highlighter pattern to not highlight "0x1080" in 1920x1080 as a hex number
+# Monkey patch Rich's generic repr highlighter. Its hex rule mistakes the "0x1080" in 1920x1080 for a number, and its
+# IPv6 and number rules split a timestamp such as 0:03.3 into separate tokens.
+
 from rich.highlighter import ReprHighlighter
 
+TIME_RANGE_HIGHLIGHTER_GUARD = r'(?:\d{1,2}:)?\d{1,2}:\d{2}(?:\.\d+)?\b'
+
 for i, regex in enumerate(ReprHighlighter.highlights):
-    if '0x' in regex:
+    if '0x' in regex and r'\b0x' not in regex:
         parts = regex.split('0x')
-        ReprHighlighter.highlights[i] = r'\b0x'.join(parts)
+        regex = r'\b0x'.join(parts)
+
+    if '(?P<ipv6>' in regex and TIME_RANGE_HIGHLIGHTER_GUARD not in regex:
+        regex = regex.replace('(?P<ipv6>', f'(?P<ipv6>(?!{TIME_RANGE_HIGHLIGHTER_GUARD})')
+        regex = regex.replace(r'(?P<number_complex>(?<!\w)', r'(?P<number_complex>(?<![\w.:])')
+        regex = regex.replace(r'(?P<number>(?<!\w)',
+            rf'(?P<number>(?<![\w.:])(?!{TIME_RANGE_HIGHLIGHTER_GUARD})')
+
+    ReprHighlighter.highlights[i] = regex
 
 #-----------------------------------------------------------------------------------------------------------------------
 
@@ -319,7 +331,7 @@ class Video(list):
             else:
                 clip.start = clip_adjusted_start
 
-            dprint(f'- After: {prev_clip} --> {clip.transition_duration}s transition --> {clip}')
+            dprint(f'- After: {prev_clip} --> {clip.transition_duration} s transition --> {clip}')
 
         # Smooth adjacent ranges from the same source. When two clips are right next to each other, the first clip's
         # transition can include part of the next clip, and vice versa. This creates a very odd effect. In this case,
@@ -384,10 +396,10 @@ class Video(list):
 
             transition_durations = []
             if clip.index > 0:
-                transition_durations += [ f'previous transition with duration {clip.transition_duration}' ]
+                transition_durations += [ f'previous transition with duration {clip.transition_duration} s' ]
 
             if clip.index < len(self)-1:
-                transition_durations += [ f'next transition with duration {self[clip.index+1].transition_duration}' ]
+                transition_durations += [ f'next transition with duration {self[clip.index+1].transition_duration} s' ]
 
             speedup_str = '' if clip.speedup == 1 else f'a speedup of {clip.speedup}x and '
             transition_durations_str = ' and '.join(transition_durations)
@@ -645,12 +657,12 @@ class Video(list):
 
             adjusted_duration = clip.output_duration - next_transition_duration
 
-            dprint(f'  - Adding duration {adjusted_duration:.2f} (adjusted by {next_transition_duration} '
+            dprint(f'  - Adding duration {adjusted_duration:.2f} s (adjusted by {next_transition_duration} s '
                 'to avoid double-counting the transition to the next clip)')
 
             output_duration += adjusted_duration
 
-        dprint(f'Final output duration = {output_duration:.2f}')
+        dprint(f'Final output duration = {output_duration:.2f} s')
 
         self._output_duration = output_duration
 
@@ -1292,23 +1304,21 @@ def in_seconds(time_string):
 #-----------------------------------------------------------------------------------------------------------------------
 
 def in_hms(total_seconds, precision=2):
-    fraction = total_seconds - int(total_seconds)
-    hours = int(total_seconds) // 3600
-    minutes = int(total_seconds) % 3600 // 60
-    seconds = int(total_seconds) % 60
+    # Round before splitting into components so that binary floating-point
+    # artifacts do not leak into output, and 59.999 seconds carries correctly.
+    total_seconds = round(total_seconds, precision)
+    hours, remaining_seconds = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remaining_seconds, 60)
 
-    hms = f'{hours}:{minutes:02d}:{seconds:02d}'
+    if precision:
+        seconds_string = f'{seconds:0{precision + 3}.{precision}f}'.rstrip('0').rstrip('.')
+    else:
+        seconds_string = f'{seconds:02.0f}'
+
+    hms = f'{int(hours)}:{int(minutes):02d}:{seconds_string}'
 
     # Remove "00:" values from the start. But leave one 0: so that we get 0:05
     hms = hms.removeprefix('0:').removeprefix('0')
-
-    # Append the ".1234" part
-    if fraction != 0 and precision > 0:
-        frac_str = str(fraction).lstrip('0')
-
-        frac_str = frac_str[0:precision+1]
-
-        hms += frac_str
 
     hms = hms or '0'
 
