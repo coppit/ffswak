@@ -1013,6 +1013,10 @@ class Clip:
     #-------------------------------------------------------------------------------------------------------------------
 
     def _set_stabilization_parameters(self):
+        # A tripod reference frame is a stabilization mode, so -t also enables stabilization.
+        if self.tripod is not None:
+            self.stabilize = True
+
         if not self.stabilize:
             return
 
@@ -1513,7 +1517,7 @@ def add_clip_options(parser, global_args=None):
     parser.add_argument('-s', '--stabilize', action='store_true', default=default('stabilize', False),
         help='Stabilize the video')
     parser.add_argument('-t', '--tripod', type=time_type, default=default('tripod', None),
-        help='Enable tripod mode, stabilizing on the time specified in TIME FORMAT.')
+        help='Enable tripod-mode stabilization, using the frame at the specified time as the reference.')
     parser.add_argument('-R', '--reverse', action='store_true', default=default('reverse', False),
         help='Reverse the video.')
     parser.add_argument('-T', '--transition-duration', type=time_type,
@@ -1945,10 +1949,10 @@ def compute_stabilize(clip, kind, skip_stabilization):
 
     stabilization_options = {}
 
-    if clip.tripod is not None:
-        stabilization_options['tripod'] = int(clip.tripod*clip.avg_frame_rate)
-
     if kind == 'prep':
+        if clip.tripod is not None:
+            stabilization_options['tripod'] = int(clip.tripod * clip.avg_frame_rate)
+
         stabilization_options['mincontrast'] = clip.mincontrast
         stabilization_options['shakiness'] = clip.shakiness
         stabilization_options['result'] = clip.transforms_file
@@ -1956,7 +1960,11 @@ def compute_stabilize(clip, kind, skip_stabilization):
         return [Filter('vidstabdetect', [], stabilization_options)]
     else:
         stabilization_options['input'] = clip.transforms_file
-        stabilization_options['smoothing'] = clip.smoothing
+
+        if clip.tripod is not None:
+            stabilization_options['tripod'] = True
+        else:
+            stabilization_options['smoothing'] = clip.smoothing
 
         return [Filter('vidstabtransform', [], stabilization_options)]
 

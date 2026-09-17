@@ -116,6 +116,17 @@ def test_compute_fps_uses_the_supplied_video_not_module_state(app, monkeypatch):
     assert isinstance(filters[0], app.Filter)
 
 
+def test_tripod_implies_stabilization_and_uses_each_filter_option_type(app):
+    clip = SimpleNamespace(stabilize=False, tripod=1, video_bitrate=100000, mincontrast=.1, shakiness=8,
+                           avg_frame_rate=app.Fraction(24, 1), transforms_file='transforms.trf', smoothing=20)
+    app.Clip._set_stabilization_parameters(clip)
+    assert clip.stabilize
+    assert app.compute_stabilize(clip, 'prep', False) == [
+        ('vidstabdetect', [], {'tripod': 24, 'mincontrast': .1, 'shakiness': 8, 'result': 'transforms.trf'})]
+    assert app.compute_stabilize(clip, 'encode', False) == [
+        ('vidstabtransform', [], {'input': 'transforms.trf', 'tripod': True})]
+
+
 @pytest.mark.parametrize('seconds,precision,expected', [
     (3.3, 2, '0:03.3'),
     (59.999, 2, '1:00'),
