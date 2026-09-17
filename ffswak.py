@@ -2301,7 +2301,7 @@ def build_copy_command(video):
 
     dprint(f'- Building video pipeline for clip {clip.index}')
 
-    assert(clip.video_filters == [] or [f[0] for f in clip.video_filters] == ['transpose'])
+    assert(all(f[0] == 'transpose' for f in clip.video_filters))
 
     # Allow re-encoding of the audio, since it's fast
     f_previous_audio = build_audio_encode_command(video)

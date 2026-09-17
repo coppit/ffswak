@@ -37,6 +37,21 @@ def test_phone_rotation_metadata_is_applied_once(media):
         assert_color(frames[:, y-8:y+8, x-8:x+8], COLORS[color])
 
 
+def test_180_degree_rotation_uses_display_metadata_when_video_is_copied(media):
+    # 180 degrees produces two transpose filters when encoding.  Copying the
+    # video must instead apply the equivalent display matrix without rejecting
+    # that pair of filters.
+    source = media.encode('landscape.mov', quadrants())
+    output = media.process('-r', '180', source, name='rotated.mov')
+    stream = media.probe(output)['streams'][0]
+    assert stream['codec_name'] == 'h264'
+    assert any(abs(side_data.get('rotation', 0)) == 180
+               for side_data in stream.get('side_data_list', []))
+    frames = media.decode(output)
+    for y, x, color in [(60, 80, 3), (60, 240, 2), (180, 80, 1), (180, 240, 0)]:
+        assert_color(frames[:, y-20:y+20, x-20:x+20], COLORS[color])
+
+
 @pytest.mark.parametrize('ranges,seconds,checkpoints', [
     (['1-2', '4-5'], 2.5, [(0, 1), (18, 1), (42, 0), (54, 0)]),
     (['5-6', '0-1'], 1.5, [(0, 1), (6, 1), (24, 0), (30, 0)]),
