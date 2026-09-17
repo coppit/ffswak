@@ -97,6 +97,16 @@ def test_option_parsers_report_invalid_values(app, parser, value):
         getattr(app, parser)(value)
 
 
+def test_temporary_file_owner_removes_paths_it_created(app):
+    temporary_files = app.TemporaryFiles()
+    path = temporary_files.create('input.mov')
+    assert not app.os.path.exists(path)
+    with open(path, 'w') as file:
+        file.write('temporary data')
+    temporary_files.cleanup()
+    assert not app.os.path.exists(path)
+
+
 def test_compute_fps_uses_the_supplied_video_not_module_state(app, monkeypatch):
     clip = SimpleNamespace(avg_frame_rate=24)
     monkeypatch.setattr(app, 'video', [object(), object()], raising=False)

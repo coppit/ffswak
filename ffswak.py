@@ -961,7 +961,7 @@ class Clip:
         if hasattr(self, '_transforms_file'):
             return self._transforms_file
 
-        self._transforms_file = make_temp_filename(self.input_file, extension='.trf')
+        self._transforms_file = _temporary_files.create(self.input_file, extension='.trf')
 
         return self._transforms_file
 
@@ -2082,40 +2082,35 @@ try:
 except (psutil.AccessDenied, PermissionError):
     pass
 
-_temporary_files = []
+class TemporaryFiles:
+    def __init__(self):
+        self.paths = []
 
-def cleanup():
-    for temp_file in _temporary_files:
-        if os.path.exists(temp_file):
-            os.remove(temp_file)
+    def create(self, input_file, extension=None):
+        basename = os.path.basename(input_file)
+        root, input_extension = os.path.splitext(basename)
+        suffix = extension if extension is not None else input_extension
 
-atexit.register(cleanup)
+        temporary_file = tempfile.NamedTemporaryFile(mode='w+', prefix=f'{root}-', suffix=suffix, delete=False)
+        temporary_file.close()
+        self.paths.append(temporary_file.name)
+        os.remove(temporary_file.name)
 
-#-----------------------------------------------------------------------------------------------------------------------
+        return temporary_file.name
 
-def make_temp_filename(input_file, extension=None):
-    basename = os.path.basename(input_file)
-    root, ext = os.path.splitext(basename)
+    def cleanup(self):
+        for path in self.paths:
+            if os.path.exists(path):
+                os.remove(path)
 
-    if extension is not None:
-        ext = extension
-
-    file = tempfile.NamedTemporaryFile(mode='w+', prefix=f'{root}-', suffix=ext, delete=False)
-    file.close()
-
-    temp_file = file.name
-
-    _temporary_files.append(temp_file)
-
-    os.remove(temp_file)
-
-    return temp_file
+_temporary_files = TemporaryFiles()
+atexit.register(_temporary_files.cleanup)
 
 #-----------------------------------------------------------------------------------------------------------------------
 
 # Workaround for https://github.com/kkroening/ffmpeg-python/issues/880
 def unique_input_file(input_file):
-    temp_file = make_temp_filename(input_file)
+    temp_file = _temporary_files.create(input_file)
 
     os.symlink(os.path.abspath(input_file), temp_file)
 
@@ -2150,7 +2145,7 @@ def make_blank_1s_video(color=None, size=None, duration=1, rate=None):
     # Force it to be 1s, for speed and disk space
     duration = 1
 
-    blank_video_file = make_temp_filename('blank.mp4', extension='.mp4')
+    blank_video_file = _temporary_files.create('blank.mp4', extension='.mp4')
 
     command = ['ffmpeg', '-f', 'lavfi', '-i', f'color=color={color}:size={size}:duration=1:rate={rate}',
         blank_video_file]
