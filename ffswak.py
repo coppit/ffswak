@@ -232,7 +232,7 @@ class TimeRange( namedtuple('TimeRange', ['start', 'end']) ):
 ORIGINAL_SYS_HOOK = sys.excepthook
 ORIGINAL_THREADING_HOOK = getattr(threading, "excepthook", None)
 
-DEBUG=False
+_debug = False
 
 def disable_pretty_exceptions():
     sys.excepthook = ORIGINAL_SYS_HOOK
@@ -240,7 +240,7 @@ def disable_pretty_exceptions():
         threading.excepthook = ORIGINAL_THREADING_HOOK
 
 def enable_pretty_exceptions():
-    install_pretty_exceptions(show_locals=DEBUG)
+    install_pretty_exceptions(show_locals=_debug)
 
 CONSOLE = Console()
 ECONSOLE = Console(stderr=True)
@@ -284,7 +284,7 @@ def eprint(*args, **kwargs):
 
 # Debug printing
 def dprint(*args, **kwargs):
-    if not DEBUG:
+    if not _debug:
         return
 
     if not hasattr(dprint, 'pending'):
@@ -1578,8 +1578,8 @@ def parse_arguments():
             sys.exit(1)
 
     if global_args.debug:
-        global DEBUG
-        DEBUG = True
+        global _debug
+        _debug = True
 
         # Re-enable to add local vars to stack traces
         disable_pretty_exceptions()
@@ -1624,7 +1624,7 @@ def parse_arguments():
 #-----------------------------------------------------------------------------------------------------------------------
 
 def dprint_command(text, command):
-    if not DEBUG:
+    if not _debug:
         return
 
     print_command(text, command)
@@ -1645,7 +1645,7 @@ def print_command(text, command):
 #-----------------------------------------------------------------------------------------------------------------------
 
 def encoded_file_not_much_smaller(video):
-    if DEBUG:
+    if _debug:
         return True
 
     output_size = os.path.getsize(video.output_file)
@@ -2077,10 +2077,10 @@ try:
 except (psutil.AccessDenied, PermissionError):
     pass
 
-TEMPORARY_FILES = []
+_temporary_files = []
 
 def cleanup():
-    for temp_file in TEMPORARY_FILES:
+    for temp_file in _temporary_files:
         if os.path.exists(temp_file):
             os.remove(temp_file)
 
@@ -2100,8 +2100,7 @@ def make_temp_filename(input_file, extension=None):
 
     temp_file = file.name
 
-    global TEMPORARY_FILES
-    TEMPORARY_FILES += [ temp_file ]
+    _temporary_files.append(temp_file)
 
     os.remove(temp_file)
 
@@ -2583,14 +2582,14 @@ def prepare(video):
     longest_duration_stabilization = max([0] + [clip.output_duration for clip in video if clip.stabilize])
 
     # In debug mode, run without stabilization, since it's so slow
-    if DEBUG and longest_duration_stabilization > 0:
+    if _debug and longest_duration_stabilization > 0:
         dprint(f'<Skipping long-running stabilization analysis for debug mode.>')
         f_outputs = build_prep_command(video, skip_stabilization=True)
         command = ffmpeg.compile(f_outputs)
 
         dprint_command('Running this preparation command', command)
 
-    if not DEBUG and longest_duration_stabilization > 0:
+    if not _debug and longest_duration_stabilization > 0:
         ffmpeg_stdout, ffmpeg_stderr = run_ffmpeg_with_progress(command, 'Collecting motion information...',
                 None, longest_duration_stabilization, False)
     else:
@@ -2637,7 +2636,7 @@ def encode_video(video):
 
     dprint_command('Encode command', ffmpeg.compile(f_output))
 
-    if DEBUG:
+    if _debug:
         dprint('<Skipping ffmpeg encoding command>')
         return
 
@@ -2650,7 +2649,7 @@ def encode_video(video):
 #-----------------------------------------------------------------------------------------------------------------------
 
 def copy_video(video):
-    if DEBUG:
+    if _debug:
         return False
 
     if not video.can_copy_video:
@@ -2673,7 +2672,7 @@ def copy_video(video):
 
     dprint_command('Copy command', ffmpeg.compile(f_output))
 
-    if DEBUG:
+    if _debug:
         dprint('<Skipping ffmpeg copy command>')
         return False
 
@@ -2808,7 +2807,6 @@ def compute_output_dimensions(video):
 #-----------------------------------------------------------------------------------------------------------------------
 
 def main():
-    global video
     video = parse_arguments()
 
     prepare(video)
@@ -2822,6 +2820,7 @@ def main():
     if encoded_file_not_much_smaller(video):
         copy_video(video)
 
+#-----------------------------------------------------------------------------------------------------------------------
 
 if __name__ == "__main__":
     main()
