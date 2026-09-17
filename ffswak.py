@@ -1224,34 +1224,10 @@ def global_options_parser():
 
     global_group.add_argument('--help', action='help', help='Show this help message and exit.')
 
-    # These options can be specified globally for all files, or separately for each file. Use the global values as the
-    # defaults for the per-file arguments. XXX: Be sure to update the other function if you update this one!
     clip_group = parser.add_argument_group('Video Options',
         description='Options for videos. Can be specified at the global or per-video level.')
 
-    clip_group.add_argument('-cl', '--crop-location', type=crop_location_type, default=('c', 'm'),
-        help='Cropped portion should be in the top/middle/bottom and left/center/right. ".2,.3" means 20%% over '
-            'from the left, and 30%% down from the top. 100%% means the right side of the crop window will be '
-            'aligned with the right side of the original video.')
-    clip_group.add_argument('-cs', '--crop-size', type=crop_size_type, default=(CropType.FRACTION, 1.0, 1.0),
-        help='Cropped portion size. .5 means 50%% as wide and tall; .5,1 means half as wide, full height; '
-          '1280x720 means exactly that size')
-    clip_group.add_argument('-p', '--speedup', type=float, default=1.0,
-        help='Change the speed. 2 means twice as fast. Disables audio.')
-    clip_group.add_argument('-r', '--rotate', type=rotation_type, default=0,
-        help='Rotate the video, cropping as needed. Positive values are clockwise.')
-    clip_group.add_argument('-v', '--volume', type=float, default=1.0,
-        help='Modify volume level. 2 means twice as loud. 0 means omit the audio track.')
-    clip_group.add_argument('-s', '--stabilize', default=False, action='store_true',
-        help='Stabilize the video')
-    clip_group.add_argument('-t', '--tripod', type=time_type, default=None,
-        help='Enable tripod mode, stabilizing on the time specified in TIME FORMAT.')
-    clip_group.add_argument('-R',  '--reverse', action='store_true',
-        help='Reverse the video.')
-    clip_group.add_argument('-T', '--transition-duration', type=time_type, default=0.5,
-        help='Transition duration when concatenating ranges, in TIME FORMAT.')
-    clip_group.add_argument('-I', '--interlace-test', action='store_true',
-        help='Enable testing the video for interlacing.')
+    add_clip_options(clip_group)
 
     return parser
 
@@ -1263,31 +1239,7 @@ class ClipArgumentParser(argparse.ArgumentParser):
 
         self._global_parser = global_parser
 
-        # These options can be specified globally for all files, or separately for each file. Use the global values as
-        # the defaults for the per-file arguments. XXX: Be sure to update the other function if you update this one!
-        self.add_argument('-cl', '--crop-location', type=crop_location_type, default=global_args.crop_location,
-            help='Cropped portion should be in the top/middle/bottom and left/center/right. ".2,.3" means 20%% over '
-                'from the left, and 30%% down from the top. 100%% means the right side of the crop window will be '
-                'aligned with the right side of the original video.')
-        self.add_argument('-cs', '--crop-size', type=crop_size_type, default=global_args.crop_size,
-            help='Cropped portion size. .5 means 50%% as wide and tall; .5,1 means half as wide, full height; '
-              '16:9 means the largest possible video with that aspect ratio; 1280x720 means exactly that size')
-        self.add_argument('-p', '--speedup', type=float, default=global_args.speedup,
-            help='Change the speed. 2 means twice as fast. Disables audio.')
-        self.add_argument('-r', '--rotate', type=rotation_type, default=global_args.rotate,
-            help='Rotate the video, cropping as needed. Positive values are clockwise.')
-        self.add_argument('-v', '--volume', type=float, default=global_args.volume,
-            help='Modify volume level. 2 means twice as loud.')
-        self.add_argument('-s', '--stabilize', default=global_args.stabilize, action='store_true',
-            help='Stabilize the video')
-        self.add_argument('-t', '--tripod', type=time_type, default=global_args.tripod,
-            help='Enable tripod mode, stabilizing on the time specified in TIME FORMAT')
-        self.add_argument('-R', '--reverse', action='store_true', default=global_args.reverse,
-            help='Reverse the video.')
-        self.add_argument('-T', '--transition-duration', type=time_type, default=global_args.transition_duration,
-            help='Transition duration when concatenating ranges, in TIME FORMAT')
-        self.add_argument('-I', '--interlace-test', action='store_true', default=global_args.interlace_test,
-            help='Enable testing the video for interlacing.')
+        add_clip_options(self, global_args)
 
         # These options are per-file only
         self.add_argument('input_file', type=video_file_type)
@@ -1503,6 +1455,41 @@ def rotation_type(arg_value):
     angle %= 360
 
     return angle
+
+#-----------------------------------------------------------------------------------------------------------------------
+
+# These options can be specified globally for all files, or separately for each file. Use the global values as the
+# defaults for the per-file arguments.
+def add_clip_options(parser, global_args=None):
+    def default(name, value):
+        return value if global_args is None else getattr(global_args, name)
+
+    parser.add_argument('-cl', '--crop-location', type=crop_location_type,
+        default=default('crop_location', ('c', 'm')),
+        help='Cropped portion should be in the top/middle/bottom and left/center/right. ".2,.3" means 20%% over '
+            'from the left, and 30%% down from the top. 100%% means the right side of the crop window will be '
+            'aligned with the right side of the original video.')
+    parser.add_argument('-cs', '--crop-size', type=crop_size_type,
+        default=default('crop_size', (CropType.FRACTION, 1.0, 1.0)),
+        help='Cropped portion size. .5 means 50%% as wide and tall; .5,1 means half as wide, full height; '
+            '1280x720 means exactly that size')
+    parser.add_argument('-p', '--speedup', type=float, default=default('speedup', 1.0),
+        help='Change the speed. 2 means twice as fast. Disables audio.')
+    parser.add_argument('-r', '--rotate', type=rotation_type, default=default('rotate', 0),
+        help='Rotate the video, cropping as needed. Positive values are clockwise.')
+    parser.add_argument('-v', '--volume', type=float, default=default('volume', 1.0),
+        help='Modify volume level. 2 means twice as loud. 0 means omit the audio track.')
+    parser.add_argument('-s', '--stabilize', action='store_true', default=default('stabilize', False),
+        help='Stabilize the video')
+    parser.add_argument('-t', '--tripod', type=time_type, default=default('tripod', None),
+        help='Enable tripod mode, stabilizing on the time specified in TIME FORMAT.')
+    parser.add_argument('-R', '--reverse', action='store_true', default=default('reverse', False),
+        help='Reverse the video.')
+    parser.add_argument('-T', '--transition-duration', type=time_type,
+        default=default('transition_duration', 0.5),
+        help='Transition duration when concatenating ranges, in TIME FORMAT.')
+    parser.add_argument('-I', '--interlace-test', action='store_true', default=default('interlace_test', False),
+        help='Enable testing the video for interlacing.')
 
 #-----------------------------------------------------------------------------------------------------------------------
 

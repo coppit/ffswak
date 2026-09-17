@@ -1,0 +1,5 @@
+[tool.ruff]
+target-version = "py37"
+
+[tool.ruff.lint]
+select = ["F821", "PLW0602"]
