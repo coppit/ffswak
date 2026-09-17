@@ -575,7 +575,7 @@ class Video(list):
     # Null value implies that there should be no video in the output.
     @property
     def max_pixel_format(self):
-        parsed = [ parse_pixel_format(clip.pixel_format) for clip in self ]
+        parsed = [ parse_pixel_format(clip.pixel_format) for clip in self if clip.video_bitrate is not None ]
 
         if not parsed:
             return None
@@ -769,7 +769,7 @@ class Video(list):
 
             estimated_clip_size = clip.overall_bitrate * adjusted_duration
 
-            if self.output_dims != None:
+            if self.output_dims is not None and clip.filtered_dims is not None:
                 estimated_clip_size *= int(self.output_dims) / int(clip.filtered_dims)
 #            else:
 #                # TODO: Use crop information to estimate.
@@ -2149,13 +2149,13 @@ def make_blank_1s_video(color=None, size=None, duration=1, rate=None):
     blank_video_file = make_temp_filename('blank.mp4', extension='.mp4')
 
     command = ['ffmpeg', '-f', 'lavfi', '-i', f'color=color={color}:size={size}:duration=1:rate={rate}',
-        blank_video_file.name]
+        blank_video_file]
 
     dprint_command('Blank video command', command)
 
-    run_ffmpeg(command, blank_video_file.name)
+    run_ffmpeg(command, blank_video_file)
 
-    return blank_video_file.name
+    return blank_video_file
 
 #-----------------------------------------------------------------------------------------------------------------------
 
@@ -2166,10 +2166,6 @@ def build_video_encode_command(video):
         f_input = ffmpeg.input( unique_input_file(clip.input_file) )
 
         dprint(f'- Building video pipeline for clip {clip.index}')
-
-        # Video
-        if clip.video_bitrate is None:
-            continue
 
         if clip.video_filters == [] or clip.video_filters[0][0] != 'color':
             dprint(f'  - Video: Using input file {clip.input_file}')

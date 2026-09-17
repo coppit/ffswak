@@ -3,7 +3,7 @@ import subprocess
 
 import numpy as np
 import pytest
-from conftest import FPS
+from conftest import FPS, run
 from test_video import quadrants, assert_timeline, assert_color, COLORS
 
 pytestmark = pytest.mark.integration
@@ -71,6 +71,22 @@ def test_join_with_missing_audio_preserves_silence_and_sync(media, audible_first
     tone_start, silence_start = (0, 2) if audible_first else (2, 0)
     assert_tone(samples, tone_start + .2, tone_start + 1.8, 660)
     assert rms(segment(samples, silence_start + .2, silence_start + 1.8)) < .002
+
+
+def test_join_with_audio_only_input_creates_a_black_video_segment(media):
+    visual = media.encode('visual.mov', quadrants())
+    audio_only = media.directory / 'audio-only.m4a'
+    run(['ffmpeg', '-v', 'error', '-y', '-f', 'lavfi', '-i', 'sine=frequency=660:sample_rate=48000:duration=2',
+         '-c:a', 'aac', audio_only], cwd=media.directory)
+    output = media.process('-T', '0', visual, audio_only)
+    assert_timeline(media, output, 4, (320, 240))
+    frames = media.decode(output)
+    for y, x, color in [(60, 80, 0), (60, 240, 1), (180, 80, 2), (180, 240, 3)]:
+        assert_color(frames[:2*FPS, y-16:y+16, x-16:x+16], COLORS[color])
+    assert_color(frames[2*FPS:, :, :], np.zeros(3))
+    audio = media.audio(output)
+    assert rms(segment(audio, .2, 1.8)) < .002
+    assert_tone(audio, 2.2, 3.8, 660)
 
 
 @pytest.mark.parametrize('volume', [1, .5])
