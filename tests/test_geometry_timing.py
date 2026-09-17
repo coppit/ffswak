@@ -197,3 +197,20 @@ def assert_different_speed_transition(media, transition, speeds, requested, expe
     assert_timeline(media, output, len(expected)/FPS, (160, 120))
     actual = media.decode(output)[:, 16:-16, 16:-16].mean(axis=(1, 2, 3))
     np.testing.assert_allclose(actual, expected, atol=4)
+
+
+def test_reversed_clips_extend_their_playback_boundaries_for_transitions(media):
+    # A reversed clip plays from its source end toward its source start. The
+    # outgoing 3-6 range therefore extends downward, while incoming 0-3
+    # extends upward. The requested ranges overlap after padding, so smoothing
+    # retracts equal output time from those same reversed-playback boundaries.
+    values = 40 + np.arange(6 * FPS, dtype=np.uint8)
+    source = media.encode('clock.mov', np.broadcast_to(values[:, None, None, None], (6*FPS, 120, 160, 3)))
+    first = values[round(2.75*FPS):6*FPS][::-1].astype(float)
+    second = values[:round(3.25*FPS)][::-1].astype(float)
+    weight = np.arange(12) / 12
+    expected = np.concatenate([first[:-12], first[-12:]*(1-weight)+second[:12]*weight, second[12:]])
+    output = media.process('-T', '.5', '--', '-R', source, '3-6', '-R', source, '0-3')
+    assert_timeline(media, output, len(expected)/FPS, (160, 120))
+    actual = media.decode(output)[:, 16:-16, 16:-16].mean(axis=(1, 2, 3))
+    np.testing.assert_allclose(actual, expected, atol=4)

@@ -268,29 +268,56 @@ class Video(list):
 
 #            dprint(f'  - Adjusting end of clip {clip.index-1} and start of clip {clip.index} for transition {clip.index}')
 
-            # First fix the end of the previous clip if it's too close to the end of the file
-            if prev_clip.end + transition_duration * prev_clip.speedup <= prev_clip.input_duration:
+            # Extend the playback end of the previous clip. For a reversed clip,
+            # playback reaches its source start last.
+            if not prev_clip.reverse and \
+                    prev_clip.end + transition_duration * prev_clip.speedup <= prev_clip.input_duration:
                 prev_clip_adjusted_end = prev_clip.end + transition_duration * prev_clip.speedup
+            elif prev_clip.reverse and prev_clip.start - transition_duration * prev_clip.speedup >= 0:
+                prev_clip_adjusted_start = prev_clip.start - transition_duration * prev_clip.speedup
             else:
-                cprint(f'[yellow1]WARNING[/]: Cannot increase the end time of clip {clip.index-1} past the '
-                    'end of the input video. '
-                    f'{transition_duration * prev_clip.speedup - (prev_clip.input_duration-prev_clip.end):.2f} '
+                boundary = prev_clip.start if prev_clip.reverse else prev_clip.input_duration - prev_clip.end
+                direction = 'decrease the start time' if prev_clip.reverse else 'increase the end time'
+                limit = 'start' if prev_clip.reverse else 'end'
+
+                cprint(f'[yellow1]WARNING[/]: Cannot {direction} of clip {clip.index-1} past the {limit} '
+                    f'of the input video. {transition_duration * prev_clip.speedup - boundary:.2f} '
                     'seconds of the desired time range will be in the transition.')
 
-                prev_clip_adjusted_end = prev_clip.input_duration
+                if prev_clip.reverse:
+                    prev_clip_adjusted_start = 0
+                else:
+                    prev_clip_adjusted_end = prev_clip.input_duration
 
-            # Then fix the start of the current clip if it's too close to the start of the file
-            if clip.start - transition_duration * clip.speedup >= 0:
+            # Extend the playback start of the current clip. For a reversed clip,
+            # playback begins at its source end.
+            if not clip.reverse and clip.start - transition_duration * clip.speedup >= 0:
                 clip_adjusted_start = clip.start - transition_duration * clip.speedup
+            elif clip.reverse and clip.end + transition_duration * clip.speedup <= clip.input_duration:
+                clip_adjusted_end = clip.end + transition_duration * clip.speedup
             else:
-                cprint(f'[yellow1]WARNING[/]: Cannot decrease the start time of clip {clip.index} before the '
-                    f'start of the input video. {transition_duration * clip.speedup - clip.start:.2f} '
+                boundary = clip.input_duration - clip.end if clip.reverse else clip.start
+                direction = 'increase the end time' if clip.reverse else 'decrease the start time'
+                limit = 'end' if clip.reverse else 'start'
+
+                cprint(f'[yellow1]WARNING[/]: Cannot {direction} of clip {clip.index} past the {limit} '
+                    f'of the input video. {transition_duration * clip.speedup - boundary:.2f} '
                     'seconds of the desired time range will be in the transition.')
 
-                clip_adjusted_start = 0
+                if clip.reverse:
+                    clip_adjusted_end = clip.input_duration
+                else:
+                    clip_adjusted_start = 0
 
-            prev_clip.end = prev_clip_adjusted_end
-            clip.start = clip_adjusted_start
+            if prev_clip.reverse:
+                prev_clip.start = prev_clip_adjusted_start
+            else:
+                prev_clip.end = prev_clip_adjusted_end
+
+            if clip.reverse:
+                clip.end = clip_adjusted_end
+            else:
+                clip.start = clip_adjusted_start
 
             dprint(f'- After: {prev_clip} --> {clip.transition_duration}s transition --> {clip}')
 
@@ -301,22 +328,30 @@ class Video(list):
             previous_range = old_time_ranges[prev_clip.index]
             current_range = old_time_ranges[clip.index]
 
-            if clip.input_file != prev_clip.input_file or \
-                    not (previous_range.start < current_range.start and previous_range.end < current_range.end):
+            if clip.input_file != prev_clip.input_file or clip.reverse != prev_clip.reverse:
+                continue
+            if not clip.reverse and not (previous_range.start < current_range.start and
+                                         previous_range.end < current_range.end):
+                continue
+            if clip.reverse and not (previous_range.start > current_range.start and
+                                     previous_range.end > current_range.end):
                 continue
 
             # Align source times at the transition midpoint: each clip travels half the transition duration at its own
             # speed. Different speeds cannot align throughout the fade, but can meet at its center.  Both quantities are
             # source seconds. Never remove requested content: only retract padding introduced above. With a zero
             # transition both padding budgets are zero, so this same arithmetic leaves ranges intact.
-            overlap = prev_clip.end - clip.start
+            overlap = clip.end - prev_clip.start if clip.reverse else prev_clip.end - clip.start
             combined_speed = prev_clip.speedup + clip.speedup
             desired_overlap = clip.transition_duration * combined_speed / 2
-            end_padding = max(0, prev_clip.end - previous_range.end)
-            start_padding = max(0, current_range.start - clip.start)
+            end_padding = max(0, previous_range.start - prev_clip.start) if prev_clip.reverse \
+                else max(0, prev_clip.end - previous_range.end)
+            start_padding = max(0, clip.end - current_range.end) if clip.reverse \
+                else max(0, current_range.start - clip.start)
             adjustment = min(max(0, overlap - desired_overlap), end_padding + start_padding)
-            # Retract equal output durations where possible, redistributing any
-            # remainder when one side runs out of padding.
+
+            # Retract equal output durations where possible, redistributing any remainder when one side runs out of
+            # padding.
             end_adjustment = min(adjustment * prev_clip.speedup / combined_speed, end_padding)
             start_adjustment = min(adjustment - end_adjustment, start_padding)
             end_adjustment = adjustment - start_adjustment
@@ -326,8 +361,15 @@ class Video(list):
                 dprint(f'- Smoothing the transition')
                 dprint(f'  - Before: {prev_clip} --> {clip.transition_duration} s transition --> {clip}')
 
-            prev_clip.end -= end_adjustment
-            clip.start += start_adjustment
+            if prev_clip.reverse:
+                prev_clip.start += end_adjustment
+            else:
+                prev_clip.end -= end_adjustment
+
+            if clip.reverse:
+                clip.end -= start_adjustment
+            else:
+                clip.start += start_adjustment
 
             if adjustment > 0:
                 dprint(f'  - After: {prev_clip} --> {clip.transition_duration} s transition --> {clip}')
