@@ -1,0 +1,4 @@
+ffmpeg-python>=0.2,<0.3
+humanize>=4,<5
+psutil>=7,<8
+rich>=14,<15

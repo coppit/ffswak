@@ -21,10 +21,10 @@ ffprobe --version
 python3 --version
 ```
 
-Install some third-party modules:
+Install the runtime dependencies:
 
 ```sh
-pip install ffmpeg-python humanize psutil rich
+python3 -m pip install -r requirements.txt
 ```
 
 Install the script:
