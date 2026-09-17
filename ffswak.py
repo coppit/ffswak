@@ -228,6 +228,17 @@ class TimeRange( namedtuple('TimeRange', ['start', 'end']) ):
 
 #-----------------------------------------------------------------------------------------------------------------------
 
+class Filter( namedtuple('Filter', ['name', 'args', 'options']) ):
+    pass
+
+#-----------------------------------------------------------------------------------------------------------------------
+
+def named_filters(filters):
+    return [video_filter if isinstance(video_filter, Filter) else Filter(*video_filter)
+            for video_filter in filters]
+
+#-----------------------------------------------------------------------------------------------------------------------
+
 # Save originals (Rich replaces them when install_pretty_exceptions() is called)
 ORIGINAL_SYS_HOOK = sys.excepthook
 ORIGINAL_THREADING_HOOK = getattr(threading, "excepthook", None)
@@ -497,7 +508,7 @@ class Video(list):
 
         clip = self[0]
 
-        non_rotation_filters = [f for f in clip.video_filters if f[0] != 'transpose']
+        non_rotation_filters = [f for f in clip.video_filters if f.name != 'transpose']
 
         if non_rotation_filters:
             return False
@@ -1677,6 +1688,7 @@ def build_video_stream_filters(video, clip, kind, skip_stabilization):
 
     if clip.video_bitrate is None:
         clip.video_filters += blank_video(video, clip, kind)
+        clip.video_filters = named_filters(clip.video_filters)
         return
 
     # First start with the transformative stuff that would affect the stabilization data.
@@ -1701,6 +1713,8 @@ def build_video_stream_filters(video, clip, kind, skip_stabilization):
         clip.video_filters += compute_color(clip, video)
         clip.video_filters += compute_scale(clip, video)
         clip.video_filters += compute_unsharp(clip)
+
+    clip.video_filters = named_filters(clip.video_filters)
 
 #-----------------------------------------------------------------------------------------------------------------------
 
@@ -1977,12 +1991,14 @@ def build_audio_stream_filters(video, clip, kind):
 
     if clip.audio_bitrate is None:
         clip.audio_filters += blank_audio(clip)
+        clip.audio_filters = named_filters(clip.audio_filters)
         return
 
     clip.audio_filters += compute_trim(clip, 'audio', kind)
     clip.audio_filters += compute_reverse(clip.reverse, 'audio')
     clip.audio_filters += compute_audio_speedup(clip)
     clip.audio_filters += compute_volume(clip)
+    clip.audio_filters = named_filters(clip.audio_filters)
 
 #-----------------------------------------------------------------------------------------------------------------------
 
@@ -2004,10 +2020,10 @@ def build_video_transition(clip, offset):
     assert(offset > 0)
 
     if clip.transition_duration == 0:
-        clip.video_transition_filter = ( 'concat', [], { 'n': 2, 'v': 1, 'a': 0 } )
+        clip.video_transition_filter = Filter('concat', [], { 'n': 2, 'v': 1, 'a': 0 })
     else:
-        clip.video_transition_filter = \
-            ( 'xfade', [], { 'transition': 'fade', 'duration': clip.transition_duration, 'offset': offset } )
+        clip.video_transition_filter = Filter('xfade', [], {
+            'transition': 'fade', 'duration': clip.transition_duration, 'offset': offset })
 
 #-----------------------------------------------------------------------------------------------------------------------
 
@@ -2015,9 +2031,9 @@ def build_audio_transition(clip, offset):
     assert(offset > 0)
 
     if clip.transition_duration == 0:
-        clip.audio_transition_filter = ( 'concat', [], { 'n': 2, 'v': 0, 'a': 1 } )
+        clip.audio_transition_filter = Filter('concat', [], { 'n': 2, 'v': 0, 'a': 1 })
     else:
-        clip.audio_transition_filter = ( 'acrossfade', [], { 'duration': clip.transition_duration } )
+        clip.audio_transition_filter = Filter('acrossfade', [], { 'duration': clip.transition_duration })
 
 #-----------------------------------------------------------------------------------------------------------------------
 
@@ -2117,7 +2133,7 @@ def build_prep_command(video, skip_stabilization=False):
             f_video = f_input.video
 
             for v_filter in clip.video_filters:
-                f_video = ffmpeg.filter(f_video, v_filter[0], *v_filter[1], **v_filter[2])
+                f_video = ffmpeg.filter(f_video, v_filter.name, *v_filter.args, **v_filter.options)
 
             # For prep runs, dump output and don't add encoding options. Also add metadata so that I can know which
             # ffmpeg stream is which
@@ -2153,7 +2169,7 @@ def build_video_encode_command(video):
 
         dprint(f'- Building video pipeline for clip {clip.index}')
 
-        if clip.video_filters == [] or clip.video_filters[0][0] != 'color':
+        if clip.video_filters == [] or clip.video_filters[0].name != 'color':
             dprint(f'  - Video: Using input file {clip.input_file}')
 
             f_video = f_input.video
@@ -2163,18 +2179,20 @@ def build_video_encode_command(video):
 
             # Convert the "color" input source in a real file because ffmpeg-python doesn't know how to do it in the
             # filtergraph
-            blank_video_filename = make_blank_1s_video(**(clip.video_filters[0][2]))
+            blank_video_filename = make_blank_1s_video(**clip.video_filters[0].options)
 
             f_video = ffmpeg.input(blank_video_filename).video
 
             video_filters = [ ( 'setpts', [ f'PTS*{clip.output_duration}' ], {} ) ] + \
                     compute_fps(video, clip, video.max_avg_frame_rate) + compute_timebase(video) + clip.video_filters[1:]
 
+        video_filters = named_filters(video_filters)
+
         dprint('    - Video filters:')
         dprint(pformat(video_filters), prefix='      ')
 
         for v_filter in video_filters:
-            f_video = ffmpeg.filter(f_video, v_filter[0], *v_filter[1], **v_filter[2])
+            f_video = ffmpeg.filter(f_video, v_filter.name, *v_filter.args, **v_filter.options)
 
         # Transitions
         if f_previous_video is not None:
@@ -2182,7 +2200,8 @@ def build_video_encode_command(video):
             dprint(pformat(clip.video_transition_filter), prefix='    ')
 
             transition = clip.video_transition_filter
-            f_video = ffmpeg.filter([f_previous_video, f_video], transition[0], *transition[1], **transition[2])
+            f_video = ffmpeg.filter([f_previous_video, f_video], transition.name, *transition.args,
+                **transition.options)
 
         f_previous_video = f_video
 
@@ -2202,7 +2221,7 @@ def build_audio_encode_command(video):
         if video.max_audio_bitrate is None:
             continue
 
-        if clip.audio_filters == [] or clip.audio_filters[0][0] != 'anullsrc':
+        if clip.audio_filters == [] or clip.audio_filters[0].name != 'anullsrc':
             dprint(f'  - Audio: Using input file {clip.input_file}')
 
             f_audio = f_input[f'a:{clip.audio_stream_index}']
@@ -2213,7 +2232,7 @@ def build_audio_encode_command(video):
             # Use anullsrc as a lavfi input (-f lavfi -i anullsrc=...), rather than
             # constructing a source node inside ffmpeg-python's filtergraph. This
             # generates the full silent segment without an intermediate audio file.
-            silence = clip.audio_filters[0][2]
+            silence = clip.audio_filters[0].options
             f_audio = ffmpeg.input(
                 f'anullsrc=r={silence["sample_rate"]}:cl={silence["channel_layout"]}',
                 f='lavfi', t=clip.output_duration).audio
@@ -2223,7 +2242,7 @@ def build_audio_encode_command(video):
         dprint(pformat(audio_filters), prefix='      ')
 
         for a_filter in audio_filters:
-            f_audio = ffmpeg.filter(f_audio, a_filter[0], *a_filter[1], **a_filter[2])
+            f_audio = ffmpeg.filter(f_audio, a_filter.name, *a_filter.args, **a_filter.options)
 
         # Transitions
         if f_previous_audio is not None:
@@ -2231,7 +2250,8 @@ def build_audio_encode_command(video):
             dprint(pformat(clip.audio_transition_filter), prefix='      ')
 
             transition = clip.audio_transition_filter
-            f_audio = ffmpeg.filter([f_previous_audio, f_audio], transition[0], *transition[1], **transition[2])
+            f_audio = ffmpeg.filter([f_previous_audio, f_audio], transition.name, *transition.args,
+                **transition.options)
 
         f_previous_audio = f_audio
 
@@ -2362,7 +2382,7 @@ def build_copy_command(video):
 
     dprint(f'- Building video pipeline for clip {clip.index}')
 
-    assert(all(f[0] == 'transpose' for f in clip.video_filters))
+    assert(all(video_filter.name == 'transpose' for video_filter in clip.video_filters))
 
     # Allow re-encoding of the audio, since it's fast
     f_previous_audio = build_audio_encode_command(video)
