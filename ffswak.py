@@ -1282,7 +1282,7 @@ def dimensions_type(arg_value):
             limit_type = DimensionLimitType.RELATIVE
 
         return DimensionLimit(limit_type, width, height)
-    except:
+    except (TypeError, ValueError):
         raise argparse.ArgumentTypeError(f'Invalid dimensions format: "{arg_value}". Expected format is ".5", '
             '".5,1", "16:9", or "1280x720"')
 
@@ -1304,7 +1304,7 @@ def crop_size_type(arg_value):
                 width, height = float(arg_value), float(arg_value)
 
             return (CropType.FRACTION, width, height)
-    except:
+    except ValueError:
         raise argparse.ArgumentTypeError(f'Invalid crop format: "{arg_value}". '
             'Expected format is ".5", ".5,.9", "16:9", or "1280x720"')
 
@@ -1318,12 +1318,12 @@ def crop_location_type(arg_value):
             x, y = map(float, arg_value.split(','))
 
             if not (0 <= x <= 1 and 0 <= y <= 1):
-                raise
+                raise ValueError
 
             return (x, y)
 
         if len(arg_value) != 2:
-            raise
+            raise ValueError
 
         (x, y) = arg_value[0:2]
 
@@ -1332,10 +1332,10 @@ def crop_location_type(arg_value):
             x, y = y, x
 
         if x not in ('l', 'c', 'r') or y not in ('t', 'm', 'b'):
-            raise
+            raise ValueError
 
         return (x, y)
-    except:
+    except ValueError:
         raise argparse.ArgumentTypeError(f'Invalid crop location: "{arg_value}". '
             'Expected format is "lt", "ct", "rt", "lm", "cm", "rm", "lb", "cb", "rb", or "x,y"')
 
@@ -1364,7 +1364,7 @@ def is_time_string(string):
     try:
         in_seconds(string)
         return True
-    except:
+    except ValueError:
         pass
 
     return False
@@ -1423,7 +1423,8 @@ def in_hms(total_seconds, precision=2):
 # post-processing
 def time_range_type(arg_value):
     try:
-        if not is_time_range(arg_value): raise
+        if not is_time_range(arg_value):
+            raise ValueError
 
         start_string, end_string = arg_value.split("-")
 
@@ -1432,7 +1433,7 @@ def time_range_type(arg_value):
 
         # We do this once the None has been resolved.
 #        if start >= end: raise
-    except:
+    except ValueError:
         raise argparse.ArgumentTypeError(f'Invalid time range format: "{arg_value}". Expected format is start-end, '
             'where the times are as described in the help, or empty to indicate the start or end of the video')
 
@@ -1452,8 +1453,9 @@ def positive_int_type(arg_value):
     try:
         value = int(arg_value)
 
-        if value <= 0: raise
-    except:
+        if value <= 0:
+            raise ValueError
+    except ValueError:
         raise argparse.ArgumentTypeError(f'"{arg_value}" must be a positive integer.')
 
     return value

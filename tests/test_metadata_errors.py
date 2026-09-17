@@ -85,6 +85,18 @@ def test_dimension_limit_parser_normalizes_every_supported_syntax(app, value, li
     assert (limit.width, limit.height) == (width, height)
 
 
+@pytest.mark.parametrize('parser,value', [
+    ('dimensions_type', '1280xwide'),
+    ('crop_size_type', '1xwide'),
+    ('crop_location_type', 'sideways'),
+    ('time_range_type', 'start-end'),
+    ('positive_int_type', 'zero'),
+])
+def test_option_parsers_report_invalid_values(app, parser, value):
+    with pytest.raises(app.argparse.ArgumentTypeError):
+        getattr(app, parser)(value)
+
+
 def test_compute_fps_uses_the_supplied_video_not_module_state(app, monkeypatch):
     clip = SimpleNamespace(avg_frame_rate=24)
     monkeypatch.setattr(app, 'video', [object(), object()], raising=False)
