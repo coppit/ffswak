@@ -1307,7 +1307,7 @@ def time_type(arg_value):
 def is_time_range(arg_value):
     parts = arg_value.split("-")
     if len(parts) != 2:
-        raise ValueError(f'Invalid time range {arg_value}')
+        return False
 
     start_string, end_string = parts
 

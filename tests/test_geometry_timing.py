@@ -229,3 +229,16 @@ def test_reversed_clips_extend_their_playback_boundaries_for_transitions(media):
     assert_timeline(media, output, len(expected)/FPS, (160, 120))
     actual = media.decode(output)[:, 16:-16, 16:-16].mean(axis=(1, 2, 3))
     np.testing.assert_allclose(actual, expected, atol=4)
+
+
+def test_long_per_file_reverse_option_follows_a_prior_clip_range(media):
+    # The splitter must recognize --reverse as an option starting the next
+    # file's block, rather than trying to parse it as a time range.
+    values = 40 + np.arange(6 * FPS, dtype=np.uint8)
+    source = media.encode('clock.mov',
+                          np.broadcast_to(values[:, None, None, None], (6*FPS, 120, 160, 3)))
+    output = media.process('-T', '0', '--', source, '0-1', '--reverse', source, '1-2')
+    assert_timeline(media, output, 2, (160, 120))
+    expected = np.concatenate([values[:FPS], values[FPS:2*FPS][::-1]]).astype(float)
+    actual = media.decode(output)[:, 16:-16, 16:-16].mean(axis=(1, 2, 3))
+    np.testing.assert_allclose(actual, expected, atol=4)
