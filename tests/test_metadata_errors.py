@@ -97,6 +97,14 @@ def test_rich_highlighter_does_not_split_timestamps(app):
     assert any(span.style == 'repr.number' for span in number.spans)
 
 
+def test_clip_snapshot_preserves_the_requested_reversed_range(app):
+    clip = app.Clip.__new__(app.Clip)
+    clip.__dict__.update(index=0, input_file='a.mov', start=3.3, end=10, speedup=1, reverse=True)
+    snapshot = app.copy.copy(clip)
+    clip.start = 2.9
+    assert str(snapshot) == 'Clip 0 (a.mov 0:10-0:03.3)'
+
+
 def test_subprocess_output_drains_both_pipes_and_retains_partial_lines(app):
     # b89aac7: exceed the read buffer, emit invalid UTF-8, end without newline, and exit fast.
     code = "import os; os.write(1, b'x'*20000+b'\\ntail'); os.write(2, b'progress\\rdiagnostic\\xff')"

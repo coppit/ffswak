@@ -40,7 +40,7 @@ VIDSTAB_ZOOM_OPTION = 2
 
 #-----------------------------------------------------------------------------------------------------------------------
 
-import argparse, atexit, datetime, ffmpeg, humanize, math, os, psutil, random
+import argparse, atexit, copy, datetime, ffmpeg, humanize, math, os, psutil, random
 import re, select, shlex, shutil, signal, stat, subprocess, sys, tempfile, threading, time
 
 from collections import namedtuple
@@ -266,6 +266,7 @@ class Video(list):
 
     def adjust_clip_durations_for_transitions(self):
         old_time_ranges = [ TimeRange(f.start, f.end) for f in self ]
+        old_clips = [ copy.copy(clip) for clip in self ]
 
         dprint('Padding clip start and end times for transitions')
 
@@ -342,12 +343,13 @@ class Video(list):
 
             if clip.input_file != prev_clip.input_file or clip.reverse != prev_clip.reverse:
                 continue
-            if not clip.reverse and not (previous_range.start < current_range.start and
-                                         previous_range.end < current_range.end):
-                continue
-            if clip.reverse and not (previous_range.start > current_range.start and
-                                     previous_range.end > current_range.end):
-                continue
+
+            if clip.reverse:
+                if not (previous_range.start > current_range.start and previous_range.end > current_range.end):
+                    continue
+            else:
+                if not (previous_range.start < current_range.start and previous_range.end < current_range.end):
+                    continue
 
             # Align source times at the transition midpoint: each clip travels half the transition duration at its own
             # speed. Different speeds cannot align throughout the fade, but can meet at its center.  Both quantities are
@@ -369,7 +371,8 @@ class Video(list):
             end_adjustment = adjustment - start_adjustment
 
             if adjustment > 0:
-                cprint(f'[yellow1]WARNING[/]: {prev_clip} is very close to {clip}. Consider merging them.')
+                cprint(f'[yellow1]WARNING[/]: {old_clips[prev_clip.index]} is very close to '
+                    f'{old_clips[clip.index]}. Consider merging them.')
                 dprint(f'- Smoothing the transition')
                 dprint(f'  - Before: {prev_clip} --> {clip.transition_duration} s transition --> {clip}')
 
