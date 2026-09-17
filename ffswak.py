@@ -237,9 +237,13 @@ def dprint(*args, **kwargs):
 #-----------------------------------------------------------------------------------------------------------------------
 
 class Video(list):
-    def __init__(self, output_dir, output_file, dimensions_limit, frame_rate_limit):
-        self.output_dir = output_dir
-        self._output_file = output_file
+    def __init__(self, output_dir, requested_output_file, dimensions_limit, frame_rate_limit):
+        # An explicit filename is relative to cwd unless -O supplies a base.
+        # The configured default directory applies only to generated filenames.
+        self.output_dir = output_dir if output_dir is not None else \
+            (os.getcwd() if requested_output_file is not None else DEFAULT_OUTPUT_DIR)
+        self._requested_output_file = requested_output_file
+        self._output_file = None
         self.dimensions_limit = dimensions_limit
         self.frame_rate_limit = frame_rate_limit
 
@@ -394,15 +398,21 @@ class Video(list):
 
         assert(self.clips_adjusted)
 
-        filenames = [ os.path.splitext(os.path.basename(clip.input_file))[0] for clip in self ]
+        output_file = self._requested_output_file
 
-        merged_filename = '-'.join(filenames)
+        if output_file is None:
+            filenames = [ os.path.splitext(os.path.basename(clip.input_file))[0] for clip in self ]
+            merged_filename = '-'.join(filenames)
+            output_file = os.path.join(self.output_dir, f'{merged_filename}.{OUTPUT_FILENAME_EXTENSION}')
+        else:
+            # os.path.join leaves an absolute requested filename unchanged.
+            output_file = os.path.join(self.output_dir, output_file)
 
-        output_file = os.path.join(self.output_dir, f'{merged_filename}.{OUTPUT_FILENAME_EXTENSION}')
+        output_file = os.path.abspath(output_file)
 
-        while os.path.exists(output_file):
-            output_file = os.path.join(self.output_dir,
-                f'{merged_filename}-{random.randrange(16**3):03x}.{OUTPUT_FILENAME_EXTENSION}')
+        root, extension = os.path.splitext(output_file)
+        while os.path.lexists(output_file):
+            output_file = f'{root}-{random.randrange(16**3):03x}{extension}'
 
         self._output_file = output_file
 
@@ -1014,9 +1024,11 @@ def global_options_parser():
         help='Maximum dimensions. .5 means 50%% as wide and tall; .5,1 means half as wide, full height; '
           '16:9 means the largest possible video with that aspect ratio; 1280x720 means exactly that size')
     global_group.add_argument('-o', '--output-file',
-        help='Output file. (Default is input.mp4, or input-abc.mp4 if needed, for re-encoding. With -c extension '
-        'is kept the same)')
-    global_group.add_argument('-O', '--output-dir', default=DEFAULT_OUTPUT_DIR, help='Output directory.')
+        help='Output file. Relative paths use -O if specified, otherwise the current directory. '
+        'Absolute paths override -O. Existing filenames get a random suffix.')
+    global_group.add_argument('-O', '--output-dir', default=None,
+        help=f'Output directory, also used as the base for relative -o paths. '
+        f'Without -o, defaults to {DEFAULT_OUTPUT_DIR}.')
     global_group.add_argument('-d', '--debug', default=False, action='store_true', help='Enable debugging messages')
 
     global_group.add_argument('--help', action='help', help='Show this help message and exit.')
@@ -2449,17 +2461,14 @@ def copy_video(video):
     clip = video[0]
 
     # Literally copy the file if there are no changes.
-    if clip.video_filters == [] and clip.audio_filters == []:
+    if clip.video_filters == [] and clip.audio_filters == [] and \
+            os.path.splitext(clip.input_file)[1].lower() == os.path.splitext(video.output_file)[1].lower():
         cprint(f"[violet]Deleting the encoded file and copying the video (since there were no changes other than "
             "re-encoding) to avoid quality loss")
 
         os.remove(video.output_file)
 
-        basename = os.path.basename(clip.input_file)
-        output_path = os.path.dirname(video.output_file)
-        output_file = os.path.join(output_path, basename)
-
-        shutil.copy2(clip.input_file, output_file)
+        shutil.copy2(clip.input_file, video.output_file)
         return False
 
     f_output = build_copy_command(video)

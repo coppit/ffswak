@@ -136,9 +136,11 @@ Global-Only Options:
                         Maximum dimensions. .5 means 50% as wide and tall; .5,1 means half as wide, full height; 16:9 means the largest possible video with that aspect ratio;
                         1280x720 means exactly that size
   -o, --output-file OUTPUT_FILE
-                        Output file. (Default is input.mp4, or input-abc.mp4 if needed, for re-encoding. With -c extension is kept the same)
+                        Output file. Relative paths use -O if specified, otherwise the current directory.
+                        Absolute paths override -O. Existing filenames get a random suffix.
   -O, --output-dir OUTPUT_DIR
-                        Output directory.
+                        Output directory, also used as the base for relative -o paths.
+                        Without -o, defaults to the configured output directory.
   -d, --debug           Enable debugging messages
   --help                Show this help message and exit.
 
