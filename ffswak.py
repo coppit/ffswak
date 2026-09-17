@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-only
 
 DEFAULT_OUTPUT_DIR = '~/Pictures/Import'
 FFMPEG = 'ffmpeg'
@@ -16,10 +17,10 @@ LIBX265_PIXEL_FORMATS = frozenset({
 WARNING_THRESHOLD = 10
 # Copy the file if we can (user didn't specify any tranformations), and the size difference is less than this percentage
 COPY_THRESHOLD = 2
-# I'm not sure what the right settings are here. I had a video of a snow blower that required 200 frames and a
-# threshold of .5 to not falsely claim it's interlaced.
-INTERLACED_FRAME_SAMPLE = 200
-INTERLACED_THRESHOLD = .6
+# Analyze enough frames for mpv's established idet policy to make a meaningful decision. Detection is cached once per
+# input file.
+INTERLACED_FRAME_SAMPLE = 360
+INTERLACED_MIN_DETERMINED_FRAMES = 200
 # For 10-bit depth
 #REENCODE_THRESHOLD = .15
 
@@ -106,6 +107,15 @@ class CropType(Enum):
     ASPECT = 'aspect'
     FRACTION = 'fraction'
     PIXELS = 'pixels'
+
+#-----------------------------------------------------------------------------------------------------------------------
+
+class InterlaceType(Enum):
+    PROGRESSIVE = 'progressive'
+    TFF = 'tff'
+    BFF = 'bff'
+    TELECINE = 'telecine'
+    UNKNOWN = 'unknown'
 
 #-----------------------------------------------------------------------------------------------------------------------
 
@@ -804,7 +814,7 @@ class Clip:
                 if disposition.get('attached_pic') or disposition.get('album_art'):
                     continue
 
-                self.interlaced = is_interlaced(self.interlace_test, self.input_file)
+                self.interlace_type = detect_interlacing(self.interlace_test, self.input_file)
                 self.input_dims = Dimensions(
                     self._probe_int(stream.get('width'), self.input_file, 'video width'),
                     self._probe_int(stream.get('height'), self.input_file, 'video height'))
@@ -1028,50 +1038,88 @@ def ffprobe(input_file):
 
 #-----------------------------------------------------------------------------------------------------------------------
 
-# http://www.aktau.be/2013/09/22/detecting-interlaced-video-with-ffmpeg/
+# The classification policy is adapted from https://github.com/mpv-player/mpv/blob/master/TOOLS/idet.sh
 @lru_cache
-def is_interlaced(interlace_test, input_file):
+def detect_interlacing(interlace_test, input_file):
     if not interlace_test:
         return None
 
     cprint(f'[violet]Calling ffmpeg to analyze interlacing of {input_file}')
 
-    # I'm assuming here that if the first part of the file is interlaced, the whole thing is.
-    command = [FFMPEG, '-filter:v', 'idet', '-frames:v', str(INTERLACED_FRAME_SAMPLE), '-an', '-f', 'rawvideo', '-y',
-        '/dev/null', '-i', input_file]
-
-    dprint_command('Test video for interlacing command', command)
-
-    ffmpeg_stdout, ffmpeg_stderr = run_ffmpeg(command, None)
-
-    results = '\n'.join(ffmpeg_stderr)
-
     try:
-        report = re.search(r'(?s).*Multi frame detection: ([^\n]*)', results).group(1)
-
-        tff = re.search(r'TFF:\s+(\d+)', report).group(1)
-        prog = re.search(r'Progressive:\s+(\d+)', report).group(1)
-
-        tff = int(tff)
-        prog = int(prog)
-    except (AttributeError) as e:
+        interlace_type, counts = run_idet(input_file, 'idet')
+    except ValueError as e:
         cprint(f"[red]Error during parsing interlacing report[/]: {e}")
-        cprint(f"Output below:\n{results}")
         sys.exit(1)
 
-    if tff + prog == 0:
-        cprint(f"[red]Error[/]: Couldn't determine if video is interlaced or not. Output below:\n{results}")
-        sys.exit(1)
+    count_summary = ', '.join(f'{name}: {value}' for name, value in counts.items())
+    if interlace_type in (InterlaceType.TFF, InterlaceType.BFF):
+        try:
+            pullup_type, _ = run_idet(input_file, f'setfield={interlace_type.value},pullup,idet')
+        except ValueError as e:
+            cprint(f"[red]Error during pullup interlace test[/]: {e}")
+            sys.exit(1)
+        if pullup_type == InterlaceType.PROGRESSIVE:
+            cprint(f'[yellow1]WARNING[/]: Detected telecine in {input_file} ({count_summary}). '
+                'Leaving it unchanged.')
+            return InterlaceType.TELECINE
 
-    if tff/(tff+prog) > INTERLACED_THRESHOLD:
-        cprint(f'Detected {tff} interlaced frames and {prog} progressive frames. Treating the input as '
-            'interlaced! Continuing in 10 seconds. CTRL-c to abort.')
+    if interlace_type == InterlaceType.UNKNOWN:
+        cprint(f'[yellow1]WARNING[/]: Could not confidently classify interlacing in {input_file} ({count_summary}). '
+            'Leaving it unchanged.')
+        return interlace_type
+
+    if interlace_type in (InterlaceType.TFF, InterlaceType.BFF):
+        cprint(f'Detected {interlace_type.value.upper()} interlacing in {input_file} ({count_summary}). '
+            'Continuing in 10 seconds. CTRL-c to abort.')
 
         time.sleep(10)
 
-        return True
+    return interlace_type
 
-    return False
+#-----------------------------------------------------------------------------------------------------------------------
+
+def run_idet(input_file, filter_string):
+    command = [FFMPEG, '-i', input_file, '-filter:v', filter_string, '-frames:v', str(INTERLACED_FRAME_SAMPLE), '-an',
+        '-f', 'null', '-']
+
+    dprint_command('Test video for interlacing command', command)
+
+    _, ffmpeg_stderr = run_ffmpeg(command, None)
+
+    return classify_idet_output('\n'.join(ffmpeg_stderr))
+
+#-----------------------------------------------------------------------------------------------------------------------
+
+def classify_idet_output(output):
+    reports = re.findall(r'Multi frame detection: ([^\n]*)', output)
+
+    if not reports:
+        raise ValueError('No multi-frame idet report found')
+
+    counts = {}
+    for name in ('TFF', 'BFF', 'Progressive', 'Undetermined'):
+        match = re.search(rf'{name}:\s+(\d+)', reports[-1])
+        if match is None:
+            raise ValueError(f'No {name} count found')
+        counts[name.lower()] = int(match.group(1))
+
+    interlaced = counts['tff'] + counts['bff']
+    determined = interlaced + counts['progressive']
+
+    if counts['undetermined'] > determined or determined < INTERLACED_MIN_DETERMINED_FRAMES:
+        return InterlaceType.UNKNOWN, counts
+
+    # mpv treats as few as 5% interlaced frames as meaningful. Require a 10:1 majority before choosing field order;
+    # wrong parity makes motion judder.
+    if interlaced * 20 <= counts['progressive']:
+        return InterlaceType.PROGRESSIVE, counts
+    if counts['tff'] > counts['bff'] * 10:
+        return InterlaceType.TFF, counts
+    if counts['bff'] > counts['tff'] * 10:
+        return InterlaceType.BFF, counts
+
+    return InterlaceType.UNKNOWN, counts
 
 #=======================================================================================================================
 
@@ -1662,10 +1710,10 @@ def compute_audio_speedup(clip):
 #-----------------------------------------------------------------------------------------------------------------------
 
 def compute_deinterlace(clip):
-    if clip.interlaced is None or not clip.interlaced:
+    if clip.interlace_type not in (InterlaceType.TFF, InterlaceType.BFF):
         return []
 
-    return [ 'yadif', [], {} ]
+    return [ ( 'yadif', [], { 'parity': clip.interlace_type.value } ) ]
 
 #-----------------------------------------------------------------------------------------------------------------------
 

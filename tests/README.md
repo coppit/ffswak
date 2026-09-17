@@ -15,7 +15,8 @@ the suite does not silently skip the main integration tests. Tested with FFmpeg 
 Media integration tests invoke the actual CLI and decode its output. Focused tests
 also exercise malformed ffprobe records and subprocess failures directly, using
 controlled metadata or small child processes. No downloads, personal videos, or
-checked-in binary fixtures are required.
+personal videos are required. Interlacing detection also uses checked-in GPL-3.0
+MKV fixtures; see `fixtures/interlacing/SOURCE.md` for their source and license.
 
 ## How the harness works
 
@@ -55,6 +56,14 @@ the desired arguments with `media.process()`, and inspect the result with
 `media.probe()` and/or `media.decode()`. Keep the behavior in the test name and
 explain the scene, expected result, and any excluded regions in nearby comments.
 Small, short videos keep these integration tests fast and memory use bounded.
+
+## Interlacing fixtures
+
+`fixtures/interlacing/` contains upstream MKV patterns for TFF, BFF, progressive,
+hard-telecined, and soft-telecined video. Their visual field and cadence markers
+make interlacing visible during manual review. The tests run FFmpeg's `idet` over
+the actual files and verify the resulting classification. The source repository,
+GPL-3.0 license, and generator script are retained alongside the media.
 
 ## Fuzzy comparisons and review artifacts
 

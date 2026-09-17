@@ -105,6 +105,46 @@ def test_clip_snapshot_preserves_the_requested_reversed_range(app):
     assert str(snapshot) == 'Clip 0 (a.mov 0:10-0:03.3)'
 
 
+@pytest.mark.parametrize('output,expected', [
+    ('Multi frame detection: TFF:   360 BFF:     0 Progressive:     0 Undetermined:     0', 'TFF'),
+    ('Multi frame detection: TFF:     0 BFF:   360 Progressive:     0 Undetermined:     0', 'BFF'),
+    ('Multi frame detection: TFF:     0 BFF:     0 Progressive:   360 Undetermined:     0', 'PROGRESSIVE'),
+    ('Multi frame detection: TFF:     8 BFF:     8 Progressive:     0 Undetermined:   344', 'UNKNOWN'),
+    ('Multi frame detection: TFF:   150 BFF:   150 Progressive:    60 Undetermined:     0', 'UNKNOWN'),
+])
+def test_idet_classification_uses_both_parities_and_rejects_ambiguity(app, output, expected):
+    interlace_type, counts = app.classify_idet_output(output)
+    assert interlace_type == app.InterlaceType[expected]
+    assert sum(counts.values()) == 360
+
+
+@pytest.mark.parametrize('interlace_type,expected', [
+    ('TFF', [('yadif', [], {'parity': 'tff'})]),
+    ('BFF', [('yadif', [], {'parity': 'bff'})]),
+    ('PROGRESSIVE', []),
+    ('TELECINE', []),
+    ('UNKNOWN', []),
+])
+def test_deinterlacing_uses_detected_field_order(app, interlace_type, expected):
+    clip = SimpleNamespace(interlace_type=app.InterlaceType[interlace_type])
+    assert app.compute_deinterlace(clip) == expected
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize('filename,expected', [
+    ('bt601-525_480_interlaced_tff.mkv', 'TFF'),
+    ('bt601-525_480_interlaced_bff.mkv', 'BFF'),
+    ('bt601-525_480_progressive.mkv', 'PROGRESSIVE'),
+    ('bt601-525_480_telecined_hard.mkv', 'TELECINE'),
+    ('bt601-525_480_telecined_soft.mkv', 'PROGRESSIVE'),
+])
+def test_upstream_interlace_patterns(app, monkeypatch, filename, expected):
+    fixture = ROOT / 'tests' / 'fixtures' / 'interlacing' / filename
+    monkeypatch.setattr(app.time, 'sleep', lambda _: None)
+    app.detect_interlace.cache_clear()
+    assert app.detect_interlace(True, str(fixture)) == app.InterlaceType[expected]
+
+
 def test_subprocess_output_drains_both_pipes_and_retains_partial_lines(app):
     # b89aac7: exceed the read buffer, emit invalid UTF-8, end without newline, and exit fast.
     code = "import os; os.write(1, b'x'*20000+b'\\ntail'); os.write(2, b'progress\\rdiagnostic\\xff')"

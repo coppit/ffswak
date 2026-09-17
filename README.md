@@ -182,7 +182,10 @@ David Coppit `<david@coppit.org>`
 
 # License
 
-See the file LICENSE for licensing information.
+ffswak is licensed under the GNU General Public License, version 3 only.
+See [LICENSE](LICENSE). Its interlace-detection policy is adapted from mpv's
+[`TOOLS/idet.sh`](https://github.com/mpv-player/mpv/blob/master/TOOLS/idet.sh),
+which is GPL-2.0-or-later and therefore compatible with GPL-3.0.
 
 # Development tests
 
