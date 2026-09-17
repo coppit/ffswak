@@ -233,12 +233,6 @@ class Filter( namedtuple('Filter', ['name', 'args', 'options']) ):
 
 #-----------------------------------------------------------------------------------------------------------------------
 
-def named_filters(filters):
-    return [video_filter if isinstance(video_filter, Filter) else Filter(*video_filter)
-            for video_filter in filters]
-
-#-----------------------------------------------------------------------------------------------------------------------
-
 # Save originals (Rich replaces them when install_pretty_exceptions() is called)
 ORIGINAL_SYS_HOOK = sys.excepthook
 ORIGINAL_THREADING_HOOK = getattr(threading, "excepthook", None)
@@ -1690,7 +1684,6 @@ def build_video_stream_filters(video, clip, kind, skip_stabilization):
 
     if clip.video_bitrate is None:
         clip.video_filters += blank_video(video, clip, kind)
-        clip.video_filters = named_filters(clip.video_filters)
         return
 
     # First start with the transformative stuff that would affect the stabilization data.
@@ -1706,7 +1699,7 @@ def build_video_stream_filters(video, clip, kind, skip_stabilization):
     clip.video_filters += compute_timebase(video)
 
     # Boost red for underwater
-#    clip.video_filters += [ ( 'curves', [], { 'red': '0/.75 .25/1 1/1' } ) ]
+#    clip.video_filters += [Filter('curves', [], {'red': '0/.75 .25/1 1/1'})]
 
     clip.video_filters += compute_stabilize(clip, kind, skip_stabilization)
 
@@ -1716,20 +1709,18 @@ def build_video_stream_filters(video, clip, kind, skip_stabilization):
         clip.video_filters += compute_scale(clip, video)
         clip.video_filters += compute_unsharp(clip)
 
-    clip.video_filters = named_filters(clip.video_filters)
-
 #-----------------------------------------------------------------------------------------------------------------------
 
 def blank_video(video, clip, kind):
     if kind == 'prep':
         return []
 
-    return [ ( 'color', [], {
+    return [Filter('color', [], {
         'color':'black',
         'size': video.output_dims,
         'duration': clip.end-clip.start,
         'rate': video.max_avg_frame_rate
-    } ) ]
+    })]
 
 #-----------------------------------------------------------------------------------------------------------------------
 
@@ -1755,8 +1746,8 @@ def compute_trim(clip, video_or_audio, kind, skip_stabilization=False):
 
     trim_filters = []
 
-    trim_filters += [ ( f'{prefix}trim', [], trim_params ) ]
-    trim_filters += [ ( f'{prefix}setpts', [ 'PTS-STARTPTS' ], {} ) ]
+    trim_filters += [Filter(f'{prefix}trim', [], trim_params)]
+    trim_filters += [Filter(f'{prefix}setpts', ['PTS-STARTPTS'], {})]
 
     return trim_filters
 
@@ -1766,7 +1757,7 @@ def compute_video_speedup(clip):
     if clip.speedup == 1.0:
         return []
 
-    return [ ( f'setpts', [ f'PTS/{clip.speedup}' ], {} ) ]
+    return [Filter('setpts', [f'PTS/{clip.speedup}'], {})]
 
 #-----------------------------------------------------------------------------------------------------------------------
 
@@ -1776,15 +1767,15 @@ def compute_audio_speedup(clip):
 
     # atempo only works between 0.5 and 2.0
     while speedup < 0.5:
-        filters += [ ( 'atempo', [0.5], {} ) ]
+        filters += [Filter('atempo', [0.5], {})]
         speedup /= 0.5
 
     while speedup > 2.0:
-        filters += [ ( 'atempo', [2], {} ) ]
+        filters += [Filter('atempo', [2], {})]
         speedup /= 2
 
     if speedup != 1.0:
-        filters += [ ( 'atempo', [speedup], {} ) ]
+        filters += [Filter('atempo', [speedup], {})]
         speedup = 1.0
 
     return filters
@@ -1795,7 +1786,7 @@ def compute_deinterlace(clip):
     if clip.interlace_type not in (InterlaceType.TFF, InterlaceType.BFF):
         return []
 
-    return [ ( 'yadif', [], { 'parity': clip.interlace_type.value } ) ]
+    return [Filter('yadif', [], {'parity': clip.interlace_type.value})]
 
 #-----------------------------------------------------------------------------------------------------------------------
 
@@ -1804,11 +1795,11 @@ def compute_rotation(clip):
     if clip.rotate == 0:
         return []
     elif clip.rotate == 90:
-        return [ ( 'transpose', [], { 'dir': 'clock' } ) ]
+        return [Filter('transpose', [], {'dir': 'clock'})]
     elif clip.rotate == 270:
-        return [ ( 'transpose', [], { 'dir': 'cclock' } ) ]
+        return [Filter('transpose', [], {'dir': 'cclock'})]
     elif clip.rotate == 180:
-        return [ ( 'transpose', [], { 'dir': 'cclock' } ), ( 'transpose', [], { 'dir': 'cclock' } ) ]
+        return [Filter('transpose', [], {'dir': 'cclock'}), Filter('transpose', [], {'dir': 'cclock'})]
 
     # Here we go. Thanks to ChatGPT for helping me finish the initial derivation.
     in_angle = clip.rotate % 180
@@ -1840,8 +1831,8 @@ def compute_rotation(clip):
     ogar = math.radians(clip.rotate)
 
     # Make it even for the encoder, rounding up
-    return [ ( 'rotate', [ogar], { 'ow': f'ceil(rotw({ogar})/2)*2', 'oh': f'ceil(roth({ogar})/2)*2' } ),
-             ( 'pad', ['iw+2', 'ih+2'], {} ) ] + compute_crop(crop)
+    return [Filter('rotate', [ogar], {'ow': f'ceil(rotw({ogar})/2)*2', 'oh': f'ceil(roth({ogar})/2)*2'}),
+            Filter('pad', ['iw+2', 'ih+2'], {})] + compute_crop(crop)
 
 #-----------------------------------------------------------------------------------------------------------------------
 
@@ -1884,7 +1875,7 @@ def compute_crop(crop):
     else:
         assert(False)
 
-    return [ ( 'crop', [], { 'w': width, 'h': height, 'x': x_pos, 'y': y_pos } ) ]
+    return [Filter('crop', [], {'w': width, 'h': height, 'x': x_pos, 'y': y_pos})]
 
 #-----------------------------------------------------------------------------------------------------------------------
 
@@ -1896,8 +1887,8 @@ def compute_reverse(is_reversed, video_or_audio):
 
     reverse_filters = []
 
-    reverse_filters += [ ( f'{prefix}reverse', [], {} ) ]
-    reverse_filters += [ ( f'{prefix}setpts', [ 'PTS-STARTPTS' ], {} ) ]
+    reverse_filters += [Filter(f'{prefix}reverse', [], {})]
+    reverse_filters += [Filter(f'{prefix}setpts', ['PTS-STARTPTS'], {})]
 
     return reverse_filters
 
@@ -1909,7 +1900,7 @@ def compute_fps(video, clip, max_avg_frame_rate):
     if len(video) == 1 and clip.avg_frame_rate == max_avg_frame_rate:
         return []
 
-    return [ ( 'fps', [], { 'fps': max_avg_frame_rate } ) ]
+    return [Filter('fps', [], {'fps': max_avg_frame_rate})]
 
 #-----------------------------------------------------------------------------------------------------------------------
 
@@ -1917,7 +1908,7 @@ def compute_timebase(video):
     if len(video) == 1:
         return []
 
-    return [ ( 'settb', [ 'AVTB' ], {} ) ]
+    return [Filter('settb', ['AVTB'], {})]
 
 #-----------------------------------------------------------------------------------------------------------------------
 
@@ -1938,12 +1929,12 @@ def compute_stabilize(clip, kind, skip_stabilization):
         stabilization_options['shakiness'] = clip.shakiness
         stabilization_options['result'] = clip.transforms_file
 
-        return [ ( 'vidstabdetect', [], stabilization_options ) ]
+        return [Filter('vidstabdetect', [], stabilization_options)]
     else:
         stabilization_options['input'] = clip.transforms_file
         stabilization_options['smoothing'] = clip.smoothing
 
-        return [ ( 'vidstabtransform', [], stabilization_options ) ]
+        return [Filter('vidstabtransform', [], stabilization_options)]
 
 #-----------------------------------------------------------------------------------------------------------------------
 
@@ -1954,7 +1945,7 @@ def compute_color(clip, video):
     if clip_pxl_fmt['family'] == video_pxl_fmt['family']:
         return []
 
-    return [ ( 'scale', [], { 'out_range': 'limited' } ) ]
+    return [Filter('scale', [], {'out_range': 'limited'})]
 
 #-----------------------------------------------------------------------------------------------------------------------
 
@@ -1962,14 +1953,14 @@ def compute_scale(clip, video):
     if clip.filtered_dims == video.output_dims:
         return []
 
-    filters = [ ( 'scale',  [], { 'w': clip.output_dims.width, 'h': clip.output_dims.height,
-            'force_original_aspect_ratio': 'decrease' } ) ]
+    filters = [Filter('scale', [], {'w': clip.output_dims.width, 'h': clip.output_dims.height,
+            'force_original_aspect_ratio': 'decrease'})]
 
     if clip.output_dims != video.output_dims:
         x = int( (video.output_dims.width - clip.output_dims.width) / 2 )
         y = int( (video.output_dims.height - clip.output_dims.height) / 2 )
 
-        filters += [ ( 'pad', [], { 'w': video.output_dims.width, 'h': video.output_dims.height, 'x': x, 'y': y } ) ]
+        filters += [Filter('pad', [], {'w': video.output_dims.width, 'h': video.output_dims.height, 'x': x, 'y': y})]
 
     return filters
 
@@ -1980,7 +1971,7 @@ def compute_unsharp(clip):
         return []
 
     # Recommended by vid.stab documentation
-    return [ ( 'unsharp', [5, 5, 0.8, 3, 3, 0.4], {} ) ]
+    return [Filter('unsharp', [5, 5, 0.8, 3, 3, 0.4], {})]
 
 #-----------------------------------------------------------------------------------------------------------------------
 
@@ -1993,20 +1984,17 @@ def build_audio_stream_filters(video, clip, kind):
 
     if clip.audio_bitrate is None:
         clip.audio_filters += blank_audio(clip)
-        clip.audio_filters = named_filters(clip.audio_filters)
         return
 
     clip.audio_filters += compute_trim(clip, 'audio', kind)
     clip.audio_filters += compute_reverse(clip.reverse, 'audio')
     clip.audio_filters += compute_audio_speedup(clip)
     clip.audio_filters += compute_volume(clip)
-    clip.audio_filters = named_filters(clip.audio_filters)
-
 #-----------------------------------------------------------------------------------------------------------------------
 
 def blank_audio(clip):
-    return [ ( 'anullsrc', [], { 'sample_rate': 44100, 'channel_layout': 'stereo',
-        'duration': clip.output_duration } ) ]
+    return [Filter('anullsrc', [], {'sample_rate': 44100, 'channel_layout': 'stereo',
+        'duration': clip.output_duration})]
 
 #-----------------------------------------------------------------------------------------------------------------------
 
@@ -2014,7 +2002,7 @@ def compute_volume(clip):
     if clip.volume == 1:
         return []
 
-    return [ ( 'volume', [ clip.volume ], {} ) ]
+    return [Filter('volume', [clip.volume], {})]
 
 #-----------------------------------------------------------------------------------------------------------------------
 
@@ -2180,10 +2168,8 @@ def build_video_encode_command(video):
 
             f_video = ffmpeg.input(blank_video_filename).video
 
-            video_filters = [ ( 'setpts', [ f'PTS*{clip.output_duration}' ], {} ) ] + \
+            video_filters = [Filter('setpts', [f'PTS*{clip.output_duration}'], {})] + \
                     compute_fps(video, clip, video.max_avg_frame_rate) + compute_timebase(video) + clip.video_filters[1:]
-
-        video_filters = named_filters(video_filters)
 
         dprint('    - Video filters:')
         dprint(pformat(video_filters), prefix='      ')

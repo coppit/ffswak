@@ -111,7 +111,9 @@ def test_compute_fps_uses_the_supplied_video_not_module_state(app, monkeypatch):
     clip = SimpleNamespace(avg_frame_rate=24)
     monkeypatch.setattr(app, 'video', [object(), object()], raising=False)
     assert app.compute_fps([clip], clip, 24) == []
-    assert app.compute_fps([clip, object()], clip, 24) == [('fps', [], {'fps': 24})]
+    filters = app.compute_fps([clip, object()], clip, 24)
+    assert filters == [('fps', [], {'fps': 24})]
+    assert isinstance(filters[0], app.Filter)
 
 
 @pytest.mark.parametrize('seconds,precision,expected', [
