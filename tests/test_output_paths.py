@@ -64,7 +64,7 @@ def test_name_collision_retries_and_resolution_stays_fixed(app, tmp_path, monkey
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize('extension', ['mov', 'mp4'])
+@pytest.mark.parametrize('extension', ['mov', 'mp4', 'm4v'])
 def test_copy_fallback_keeps_resolved_destination_and_container(media, extension):
     # Force the fallback decision to avoid tying this regression to encoder sizes.
     # All probing, encoding, copying/remuxing, and decoding still use real media.
@@ -136,3 +136,18 @@ def test_default_output_directory_only_applies_to_generated_names(app, tmp_path,
         video.append(SimpleNamespace(input_file='movie.mov'))
         video.clips_adjusted = True
         assert video.output_file == str(expected)
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize('extension', ['m4v', 'M4V'])
+def test_m4v_output_supports_hevc(media, extension):
+    # The extension must not select the HEVC-incompatible iPod muxer.
+    from test_video import assert_color, COLORS
+    source = media.encode('source.mov', quadrants())
+    output = media.process('-cs', '.5', '-cl', '0,0', source, name=f'output.{extension}')
+    stream = media.probe(output)['streams'][0]
+    assert stream['codec_name'] == 'hevc'
+    assert stream['codec_tag_string'] == 'hvc1'
+    frames = media.decode(output)
+    assert frames.shape == (48, 120, 160, 3)
+    assert_color(frames[:, 8:-8, 8:-8], COLORS[0])

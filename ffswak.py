@@ -2145,6 +2145,11 @@ def build_encode_command_with_parameters(video, f_previous_video, f_previous_aud
     if f_previous_video is None and f_previous_audio is not None:
         video.output_file = os.path.splitext(video.output_file)[0] + '.m4a'
 
+    # .m4v can contain HEVC in an MP4 container, but FFmpeg's extension guessing
+    # selects the legacy iPod muxer, which rejects HEVC. Override only that case.
+    if os.path.splitext(video.output_file)[1].lower() == '.m4v':
+        named_params['format'] = 'mp4'
+
     return ffmpeg.output(*input_streams, video.output_file, **named_params)
 
 #-----------------------------------------------------------------------------------------------------------------------
