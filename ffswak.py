@@ -2208,7 +2208,7 @@ def make_blank_1s_video(color=None, size=None, duration=1, rate=None):
 
     blank_video_file = _temporary_files.create('blank.mp4', extension='.mp4')
 
-    command = ['ffmpeg', '-f', 'lavfi', '-i', f'color=color={color}:size={size}:duration=1:rate={rate}',
+    command = [FFMPEG, '-f', 'lavfi', '-i', f'color=color={color}:size={size}:duration=1:rate={rate}',
         blank_video_file]
 
     dprint_command('Blank video command', command)
