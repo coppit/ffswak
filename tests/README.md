@@ -9,6 +9,31 @@ python3 -m venv .venv
 .venv/bin/python -m pytest
 ```
 
+The suite runs four tests concurrently using pytest-xdist. Each test retains its own temporary files and command
+logs, and all media assertions still run. Four workers keep concurrency bounded because FFmpeg also uses threads.
+Install the updated `requirements-test.txt` in an existing environment before running the suite.
+
+If you use an existing `python3` environment instead of `.venv`, install dependencies with that same interpreter:
+
+```sh
+python3 -m pip install -r requirements-test.txt
+python3 -m pytest
+```
+
+An `unrecognized arguments: -n` error means pytest-xdist is missing from the environment running pytest. Run the
+installation command above; installing it in a different virtual environment will not fix that interpreter.
+
+Use `python -m pytest -n 0` for sequential execution or debugging, or `python -m pytest -n 2` to reduce CPU and memory
+use. For a focused test, `python -m pytest -n 0 tests/test_metadata_errors.py` avoids worker startup overhead.
+On the development machine, all 130 tests passed in about 23 seconds with four workers, compared with 82 seconds
+sequentially. Timing depends on the machine and FFmpeg build.
+
+Interactive runs show a live progress row for each test file. Each row includes a bar and completed/total counts;
+`F` counts tests with failures or setup/teardown errors, and `s/x` counts skipped or expected-failure tests. Completion
+is counted after teardown. Pytest still prints its usual failure details and final result summary.
+Use `--file-progress=off` for standard pytest output, or `--file-progress=on` to force the display. Automatic mode
+keeps standard output when redirected, when using `-v`, or when capture is disabled with `-s`.
+
 ## Developer checks
 
 Ruff checks for undefined names and unnecessary `global` declarations. It is a source check, separate from the media
