@@ -116,8 +116,8 @@ def test_output_directory_and_filename_resolution(app, tmp_path, monkeypatch, ca
         output_dir, requested, expected = str(base), str(absolute), absolute
     else:
         output_dir, requested, expected = str(base), None, base / 'source.mp4'
-    expected.parent.mkdir(parents=True, exist_ok=True)
     if collision:
+        expected.parent.mkdir(parents=True, exist_ok=True)
         expected.write_bytes(b'keep existing output')
     video = app.Video(output_dir, requested, app.Dimensions(320, 240), 24)
     video.append(SimpleNamespace(input_file='source.mov', video_bitrate=500000, audio_bitrate=None))
@@ -129,6 +129,7 @@ def test_output_directory_and_filename_resolution(app, tmp_path, monkeypatch, ca
         assert re.fullmatch(re.escape(expected.stem) + r'-[0-9a-f]{3}' + re.escape(expected.suffix), output.name)
     else:
         assert output == expected
+    assert output.parent.is_dir()
     assert not output.exists()
 
 
@@ -142,6 +143,22 @@ def test_default_output_directory_only_applies_to_generated_names(app, tmp_path,
         video.append(SimpleNamespace(input_file='movie.mov', video_bitrate=500000, audio_bitrate=None))
         video.clips_adjusted = True
         assert video.output_file == str(expected)
+
+
+def test_output_directory_must_not_be_a_regular_file(app, tmp_path, monkeypatch):
+    not_a_directory = tmp_path / 'not-a-directory'
+    not_a_directory.write_text('not a directory')
+    messages = []
+    monkeypatch.setattr(app, 'cprint', lambda message: messages.append(message))
+    video = app.Video(str(not_a_directory), None, app.Dimensions(320, 240), 24)
+    video.append(SimpleNamespace(input_file='source.mov', video_bitrate=500000, audio_bitrate=None))
+    video.clips_adjusted = True
+
+    with pytest.raises(SystemExit) as error:
+        video.output_file
+
+    assert error.value.code == 1
+    assert 'not a directory' in ' '.join(messages)
 
 
 @pytest.mark.integration

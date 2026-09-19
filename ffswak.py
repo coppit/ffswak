@@ -623,6 +623,8 @@ class Video(list):
                 f'to {extension}.')
             output_file = f'{root}{extension}'
 
+        ensure_output_directory(output_file)
+
         while os.path.lexists(output_file):
             output_file = f'{root}-{random.randrange(16**3):03x}{extension}'
 
@@ -2536,6 +2538,36 @@ def time_completion(line):
 
 #-----------------------------------------------------------------------------------------------------------------------
 
+def ensure_output_directory(output_file):
+    output_dir = os.path.dirname(output_file)
+
+    if os.path.lexists(output_dir) and not os.path.isdir(output_dir):
+        cprint(f'[red]Cannot use output directory "{output_dir}"[/]: it is not a directory.')
+        sys.exit(1)
+
+    try:
+        os.makedirs(output_dir, exist_ok=True)
+    except OSError as error:
+        cprint(f'[red]Cannot create output directory "{output_dir}"[/]: {error}')
+        sys.exit(1)
+
+    if not os.path.isdir(output_dir):
+        cprint(f'[red]Cannot use output directory "{output_dir}"[/]: it is not a directory.')
+        sys.exit(1)
+
+#-----------------------------------------------------------------------------------------------------------------------
+
+def cleanup_output_file(output_file):
+    if output_file is None or not os.path.lexists(output_file) or os.path.isdir(output_file):
+        return
+
+    try:
+        os.remove(output_file)
+    except OSError as error:
+        cprint(f'[yellow1]WARNING[/]: Could not remove incomplete output file "{output_file}": {error}')
+
+#-----------------------------------------------------------------------------------------------------------------------
+
 def run_ffmpeg(command, output_file, progress=None, progress_callback=None):
     # Capture all output in a single buffer
     full_output_buffer = []
@@ -2554,8 +2586,7 @@ def run_ffmpeg(command, output_file, progress=None, progress_callback=None):
 
         process.send_signal(signal.SIGINT)
 
-        if output_file is not None and os.path.exists(output_file):
-            os.remove(output_file)
+        cleanup_output_file(output_file)
 
         exit(1)
 
@@ -2616,6 +2647,8 @@ def run_ffmpeg(command, output_file, progress=None, progress_callback=None):
                 # row after the report (or leaves the report on the same terminal line as the live display).
                 progress.live.transient = True
                 progress.live.stop()
+
+            cleanup_output_file(output_file)
 
             cprint(f'[red]ffmpeg failed.[/] Command was:')
             print_command(None, command)

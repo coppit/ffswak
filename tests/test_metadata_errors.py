@@ -305,6 +305,20 @@ def test_failed_subprocess_reports_final_diagnostic_and_exit_code(app, monkeypat
     assert signal.getsignal(signal.SIGINT) == original
 
 
+def test_failed_subprocess_removes_its_incomplete_output(app, tmp_path, monkeypatch):
+    output = tmp_path / 'incomplete.mp4'
+    messages = []
+    monkeypatch.setattr(app, 'cprint', lambda *args, **kwargs: messages.extend(map(str, args)))
+    monkeypatch.setattr(app, 'eprint', lambda *args, **kwargs: messages.extend(map(str, args)))
+    code = "from pathlib import Path; Path(__import__('sys').argv[1]).write_bytes(b'partial'); raise SystemExit(7)"
+
+    with pytest.raises(SystemExit) as error:
+        app.run_ffmpeg([sys.executable, '-c', code, str(output)], str(output))
+
+    assert error.value.code == 7
+    assert not output.exists()
+
+
 def test_progress_display_stops_before_failure_diagnostics(app, monkeypatch):
     # ef9ffe7: assert ordering, not terminal escape sequences or cosmetic formatting.
     events = []
