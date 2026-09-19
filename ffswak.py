@@ -2,24 +2,16 @@
 # SPDX-License-Identifier: GPL-3.0-only
 
 DEFAULT_OUTPUT_DIR = '~/Pictures/Import'
-FFMPEG = 'ffmpeg'
+
 # Implies the container type. Examples: mov, mkv, mp4
 OUTPUT_FILENAME_EXTENSION = 'mp4'
+
 MAX_DIMENSIONS='1920x1080'
-# Output formats accepted by the libx265 encoder. Keep this list aligned with the encoder choice in
-# build_encode_command_with_parameters(); a format that ffmpeg can decode is not necessarily one libx265 can encode.
-LIBX265_PIXEL_FORMATS = frozenset({
-    'yuv420p', 'yuv422p', 'yuv444p', 'yuvj420p', 'yuvj422p', 'yuvj444p', 'gbrp', 'gray',
-    'yuv420p10le', 'yuv422p10le', 'yuv444p10le', 'gbrp10le', 'gray10le',
-    'yuv420p12le', 'yuv422p12le', 'yuv444p12le', 'gbrp12le', 'gray12le',
-})
+
 # Warn if the output file is this percent smaller or less. (Always warn if it's larger.)
 WARNING_THRESHOLD = 10
 # Copy the file if we can (user didn't specify any tranformations), and the size difference is less than this percentage
 COPY_THRESHOLD = 2
-# A recognized audio stream can omit its bit rate, particularly in Matroska. Zero is a sentinel for that case: it is
-# enough to retain or stream-copy the audio, while a filtered stream is re-encoded at the configured AAC bitrate.
-UNKNOWN_AUDIO_BITRATE = 0
 # Analyze enough frames for mpv's established idet policy to make a meaningful decision. Detection is cached once per
 # input file.
 INTERLACED_FRAME_SAMPLE = 360
@@ -42,6 +34,17 @@ VIDSTAB_ZOOM = 20
 # 0=disabled, 1=strong movements lead to borders, 2=no borders
 VIDSTAB_ZOOM_OPTION = 2
 
+# CRF of 20 gave the highest VMAF score on a video directly from my iPhone. Any lower and the size blew
+# up without improving quality. ffmpeg -i original.mov -i encoded.mov -lavfi libvmaf -f null
+# The best I could do was 83. I'm not sure why.
+VIDEO_CODEC = 'libx265'
+CRF = 20
+
+AUDIO_CODEC = 'aac'
+AUDIO_BITRATE = '192k'
+
+FFMPEG = 'ffmpeg'
+
 #-----------------------------------------------------------------------------------------------------------------------
 
 import argparse, atexit, copy, datetime, ffmpeg, humanize, math, os, psutil, random
@@ -59,6 +62,10 @@ from rich.text import Text
 from rich.traceback import install as install_pretty_exceptions
 
 #-----------------------------------------------------------------------------------------------------------------------
+
+# A recognized audio stream can omit its bit rate, particularly in Matroska. Zero is a sentinel for that case: it is
+# enough to retain or stream-copy the audio, while a filtered stream is re-encoded at the configured AAC bitrate.
+UNKNOWN_AUDIO_BITRATE = 0
 
 DEFAULT_OUTPUT_DIR = os.path.expanduser(DEFAULT_OUTPUT_DIR)
 
@@ -618,7 +625,7 @@ class Video(list):
                 family = families.pop()
             else:
                 # There is no lossless common pixel format for different color families. Convert to YUV because it is
-                # widely supported by libx265. This can lose information: RGB/GBR-to-YUV conversion is quantized, and
+                # widely supported by video encoders. This can lose information: RGB/GBR-to-YUV conversion is quantized, and
                 # full-range YUV (yuvj) must be converted to limited-range YUV when combined with ordinary YUV.
                 if not hasattr(self, '_warned_about_pixel_format'):
                     cprint(f'[yellow1]WARNING[/]: Found mixed pixel families {families}. Converting to yuv.')
@@ -629,11 +636,11 @@ class Video(list):
             # Take the maximum of each
             max_sub = max(p["subsampling"] for p in parsed)
             max_depth = max(p["depth"] for p in parsed)
-            # libx265 uses little-endian storage for high-bit-depth formats. This is a byte-order conversion, not a
+            # Prefer little-endian storage for high-bit-depth formats. This is a byte-order conversion, not a
             # bit-depth reduction, so choosing it does not lose image information.
             endian = 'le' if max_depth > 8 else ''
 
-            # Use the format names libx265 accepts. Its planar GBR and grayscale names omit a subsampling component.
+            # FFmpeg's planar GBR and grayscale names omit a subsampling component.
             if max_depth == 8:
                 max_depth = ''
 
@@ -644,19 +651,32 @@ class Video(list):
             else:
                 output_format = f"{family}{max_sub}p{max_depth}{endian}"
 
-        if output_format in LIBX265_PIXEL_FORMATS:
+        supported_pixel_formats = encoder_pixel_formats(FFMPEG, VIDEO_CODEC)
+
+        if output_format in supported_pixel_formats:
             return output_format
 
         computed_format = parse_pixel_format(output_format)
 
+        parsed_candidates = []
+        for pixel_format_name in supported_pixel_formats:
+            try:
+                parsed_candidates.append((pixel_format_name, parse_pixel_format(pixel_format_name)))
+            except ValueError:
+                # FFmpeg may advertise hardware surfaces or layouts we cannot compare for quality.
+                continue
+
         # First try to find an encoder-supported format from the same color family.
-        candidates = [ (format_name, parse_pixel_format(format_name)) for format_name in LIBX265_PIXEL_FORMATS
-            if parse_pixel_format(format_name)['family'] == computed_format['family'] ]
+        candidates = [candidate for candidate in parsed_candidates
+            if candidate[1]['family'] == computed_format['family']]
 
         # If that fails, fall back to yuv
         if not candidates:
-            candidates = [(format_name, parse_pixel_format(format_name))
-                for format_name in LIBX265_PIXEL_FORMATS if parse_pixel_format(format_name)['family'] == 'yuv']
+            candidates = [candidate for candidate in parsed_candidates if candidate[1]['family'] == 'yuv']
+
+        if not candidates:
+            sys.exit(f'Cannot select a pixel format for encoder {VIDEO_CODEC!r}: '
+                f'no compatible format recognized by ffswak for {output_format}.')
 
         # Sort the candidates and choose the best. The sort order first avoids chroma downsampling, then avoids
         # bit-depth reduction, and finally minimizes any remaining layout difference. This fallback can still lose
@@ -688,7 +708,7 @@ class Video(list):
                 else:
                     loss_description = ', '.join(losses[:-1]) + f', and {losses[-1]}'
 
-                cprint(f'[yellow1]WARNING[/]: libx265 cannot encode {computed_format["output_format"]}. '
+                cprint(f'[yellow1]WARNING[/]: {VIDEO_CODEC} cannot encode {computed_format["output_format"]}. '
                     f'Using {output_format}, which may {loss_description}.')
                 self._warned_about_unsupported_pixel_format = True
 
@@ -1058,7 +1078,7 @@ class Clip:
 #-----------------------------------------------------------------------------------------------------------------------
 
 def parse_pixel_format(format_string):
-    # These formats use a packed or semi-planar memory layout. Each maps to a planar libx265 format with the same
+    # These formats use a packed or semi-planar memory layout. Each maps to a planar format with the same
     # color model, chroma sampling, and bit depth, so this canonicalization itself does not reduce quality.
     packed_formats = {
         'gray': ('gray', 400, 8, '', 'gray'),
@@ -1097,7 +1117,7 @@ def parse_pixel_format(format_string):
         depth = int(depth) if depth else 8
         endian = endian or ''
 
-        # libx265 accepts little-endian high-bit-depth planes. Byte order is only a memory-layout detail, so
+        # Prefer little-endian high-bit-depth planes. Byte order is only a memory-layout detail, so
         # converting big-endian input to little-endian preserves every sample.
         output_format = format_string if endian != 'be' else \
             f'{family}{subs}p{depth}le'
@@ -1126,6 +1146,27 @@ def parse_pixel_format(format_string):
         'endian': endian,
         'output_format': f'gbrp{depth}le' if endian == 'be' else format_string
     }
+
+#-----------------------------------------------------------------------------------------------------------------------
+
+@lru_cache
+def encoder_pixel_formats(ffmpeg_command, encoder):
+    command = [ffmpeg_command, '-hide_banner', '-h', f'encoder={encoder}']
+
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, check=True, timeout=10)
+    except (OSError, subprocess.SubprocessError) as error:
+        sys.exit(f'Cannot query pixel formats for encoder {encoder!r}: {error}')
+
+    # Some FFmpeg versions report an unknown encoder with exit status zero.
+    match = re.search(r'^\s*Supported pixel formats:[ \t]*([^\r\n]*)',
+        result.stdout + '\n' + result.stderr, re.MULTILINE)
+
+    if match is None or not match.group(1).split():
+        sys.exit(f'FFmpeg did not report supported pixel formats for encoder {encoder!r}. '
+            f'Check with: {" ".join(shlex.quote(arg) for arg in command)}')
+
+    return tuple(match.group(1).split())
 
 #-----------------------------------------------------------------------------------------------------------------------
 
@@ -2332,9 +2373,9 @@ def build_encode_command_with_parameters(video, f_previous_video, f_previous_aud
             # CRF of 20 gave the highest VMAF score on a video directly from my iPhone. Any lower and the size blew
             # up without improving quality. ffmpeg -i original.mov -i encoded.mov -lavfi libvmaf -f null
             # The best I could do was 83. I'm not sure why.
-            named_params['vcodec'] = 'libx265'
+            named_params['vcodec'] = VIDEO_CODEC
             named_params['pix_fmt'] = video.max_pixel_format
-            named_params['crf'] = 20
+            named_params['crf'] = CRF
 
             # Ensure we don't "over-quality" videos with the -crf 20 above, ballooning the file size needlessly.
             named_params['maxrate'] = video.max_video_bitrate
@@ -2350,8 +2391,8 @@ def build_encode_command_with_parameters(video, f_previous_video, f_previous_aud
         if video.can_copy_audio:
             named_params['acodec'] = 'copy'
         else:
-            named_params['acodec'] = 'aac'
-            named_params['audio_bitrate'] = '192k'
+            named_params['acodec'] = AUDIO_CODEC
+            named_params['audio_bitrate'] = AUDIO_BITRATE
 
     if video.output_duration is not None:
         named_params['metadata:g'] = f'creation_time={video.output_creation_time}'

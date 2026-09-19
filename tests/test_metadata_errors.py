@@ -28,6 +28,37 @@ def probe_data():
          'avg_frame_rate': '24000/1001'}]}
 
 
+def test_encoder_pixel_formats_are_cached_per_encoder(app, monkeypatch):
+    calls = []
+
+    def query(command, **kwargs):
+        calls.append(command)
+        formats = 'yuv420p yuv420p10le' if command[-1] == 'encoder=libx265' else 'yuv422p10le'
+        return SimpleNamespace(stdout=f'    Supported pixel formats: {formats}\n', stderr='')
+
+    monkeypatch.setattr(app.subprocess, 'run', query)
+    assert app.encoder_pixel_formats('ffmpeg', 'libx265') == ('yuv420p', 'yuv420p10le')
+    assert app.encoder_pixel_formats('ffmpeg', 'libx265') == ('yuv420p', 'yuv420p10le')
+    assert app.encoder_pixel_formats('ffmpeg', 'prores_ks') == ('yuv422p10le',)
+    assert len(calls) == 2
+
+
+def test_encoder_without_pixel_formats_reports_error(app, monkeypatch):
+    monkeypatch.setattr(app.subprocess, 'run', lambda *args, **kwargs:
+        SimpleNamespace(stdout="Codec 'missing' is not recognized by FFmpeg.\n", stderr=''))
+    with pytest.raises(SystemExit, match="did not report supported pixel formats.*missing"):
+        app.encoder_pixel_formats('ffmpeg', 'missing')
+
+
+def test_pixel_format_selection_uses_configured_encoder(app, monkeypatch):
+    monkeypatch.setattr(app, 'VIDEO_CODEC', 'prores_ks')
+    monkeypatch.setattr(app, 'encoder_pixel_formats', lambda command, encoder:
+        ('yuv422p10le', 'yuva444p10le') if encoder == 'prores_ks' else ('yuv420p',))
+    video = app.Video('/tmp', None, app.Dimensions(320, 240), 24)
+    video.append(SimpleNamespace(video_bitrate=500000, pixel_format='yuv420p'))
+    assert video.max_pixel_format == 'yuv422p10le'
+
+
 def clip(app):
     return app.Clip(input_file='synthetic.mov', start=0, end=None, speedup=1,
                     volume=1, stabilize=False, tripod=None, interlace_test=False)
