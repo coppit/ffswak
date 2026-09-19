@@ -94,14 +94,24 @@ def test_invalid_probe_metadata_reports_field_instead_of_traceback(app, monkeypa
 def test_audio_copy_decision_uses_its_own_video(app, monkeypatch):
     # cd34ef0 used the global video rather than self. Two different videos catch that.
     own = app.Video('/tmp', None, app.Dimensions(320, 240), 24)
-    own.append(SimpleNamespace(audio_bitrate=128000, audio_filters=[]))
+    own.append(SimpleNamespace(video_bitrate=None, audio_bitrate=128000, audio_codec='aac', audio_filters=[]))
     other = app.Video('/tmp', None, app.Dimensions(320, 240), 24)
-    other.append(SimpleNamespace(audio_bitrate=300000, audio_filters=[]))
+    other.append(SimpleNamespace(video_bitrate=None, audio_bitrate=300000, audio_codec='aac', audio_filters=[]))
     monkeypatch.setattr(app, 'video', other, raising=False)
     assert own.can_copy_audio
     assert not other.can_copy_audio
     own[0].audio_filters = [('volume', [0.5], {})]
     assert not own.can_copy_audio
+
+
+def test_audio_copy_requires_a_codec_supported_by_the_output_container(app):
+    video = app.Video('/tmp', 'output.m4a', app.Dimensions(320, 240), 24)
+    video.append(SimpleNamespace(video_bitrate=None, audio_bitrate=64000, audio_codec='vorbis', audio_filters=[]))
+    assert not video.can_copy_audio
+
+    video._requested_output_file = 'output.mka'
+    video[0].video_bitrate = 500000
+    assert video.can_copy_audio
 
 
 @pytest.mark.parametrize('value,limit_type,width,height', [

@@ -43,6 +43,17 @@ CRF = 20
 AUDIO_CODEC = 'aac'
 AUDIO_BITRATE = '192k'
 
+# Stream copying is only safe when the destination container supports the input codec. Keep this deliberately
+# conservative: re-encoding a compatible-but-unlisted codec is preferable to producing an FFmpeg muxer failure.
+AUDIO_COPY_CODECS_BY_EXTENSION = {
+    '.m4a': {'aac', 'alac'},
+    '.m4v': {'aac', 'alac'},
+    '.mov': {'aac', 'alac'},
+    '.mp4': {'aac', 'alac'},
+    '.webm': {'opus', 'vorbis'},
+}
+FLEXIBLE_AUDIO_COPY_EXTENSIONS = {'.mka', '.mkv'}
+
 FFMPEG = 'ffmpeg'
 
 #-----------------------------------------------------------------------------------------------------------------------
@@ -564,7 +575,25 @@ class Video(list):
         if self.max_audio_bitrate > 192 * 1024:
             return False
 
-        return True
+        clip = self[0]
+        audio_codec = getattr(clip, 'audio_codec', None)
+        output_extension = self.output_extension
+
+        return output_extension in FLEXIBLE_AUDIO_COPY_EXTENSIONS or \
+            audio_codec in AUDIO_COPY_CODECS_BY_EXTENSION.get(output_extension, set())
+
+    #-------------------------------------------------------------------------------------------------------------------
+
+    @property
+    def output_extension(self):
+        # Audio-only outputs always use M4A, regardless of the requested extension.
+        if self.max_video_bitrate is None and self.max_audio_bitrate is not None:
+            return '.m4a'
+
+        if self._requested_output_file is not None:
+            return os.path.splitext(self._requested_output_file)[1].lower()
+
+        return f'.{OUTPUT_FILENAME_EXTENSION.lower()}'
 
     #-------------------------------------------------------------------------------------------------------------------
 
@@ -580,19 +609,18 @@ class Video(list):
         if output_file is None:
             filenames = [ os.path.splitext(os.path.basename(clip.input_file))[0] for clip in self ]
             merged_filename = '-'.join(filenames)
-            extension = 'm4a' if self.max_video_bitrate is None and self.max_audio_bitrate is not None \
-                else OUTPUT_FILENAME_EXTENSION
-            output_file = os.path.join(self.output_dir, f'{merged_filename}.{extension}')
+            output_file = os.path.join(self.output_dir, f'{merged_filename}{self.output_extension}')
         else:
             # os.path.join leaves an absolute requested filename unchanged.
             output_file = os.path.join(self.output_dir, output_file)
 
         output_file = os.path.abspath(output_file)
 
-        root, extension = os.path.splitext(output_file)
-        if self.max_video_bitrate is None and self.max_audio_bitrate is not None and extension.lower() != '.m4a':
-            cprint(f'[yellow1]WARNING[/]: Audio-only output. Changing filename extension from {extension} to .m4a.')
-            extension = '.m4a'
+        root, requested_extension = os.path.splitext(output_file)
+        extension = self.output_extension
+        if requested_extension.lower() != extension:
+            cprint(f'[yellow1]WARNING[/]: Audio-only output. Changing filename extension from {requested_extension} '
+                f'to {extension}.')
             output_file = f'{root}{extension}'
 
         while os.path.lexists(output_file):
@@ -895,7 +923,7 @@ class Clip:
     def _set_attributes(self):
         self.input_dims, self.input_duration, self.creation_time = None, None, None
         self.video_bitrate, self.audio_bitrate, self.avg_frame_rate = None, None, None
-        self.audio_stream_index = None
+        self.audio_stream_index, self.audio_codec = None, None
 
         try:
             probe_result = ffprobe(self.input_file)
@@ -983,6 +1011,7 @@ class Clip:
                         self.audio_bitrate = UNKNOWN_AUDIO_BITRATE if audio_bitrate is None else self._probe_int(
                             audio_bitrate, self.input_file, 'audio bitrate')
                         self.audio_stream_index = audio_stream_index
+                        self.audio_codec = stream['codec_name']
                     else:
                         cprint(f'[yellow1]WARNING[/]: Ignoring additional audio stream #{audio_stream_index} with'
                             f' codec {stream.get("codec_name")}.')

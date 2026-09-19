@@ -105,6 +105,19 @@ def test_audio_only_input_keeps_audio_and_uses_an_audio_container(media):
     assert rms(segment(media.audio(output), .2, 1.8)) == pytest.approx(.044, abs=.007)
 
 
+def test_incompatible_audio_is_reencoded_for_m4a_output(media):
+    source = media.directory / 'audio-only.mka'
+    output = media.directory / 'output.m4a'
+    run(['ffmpeg', '-v', 'error', '-y', '-f', 'lavfi', '-i',
+         'sine=frequency=660:sample_rate=48000:duration=2', '-c:a', 'libvorbis', source], cwd=media.directory)
+
+    run([sys.executable, ROOT / 'ffswak.py', '-o', output, source], cwd=media.directory)
+
+    streams = media.streams(output)
+    assert [stream['codec_name'] for stream in streams] == ['aac']
+    assert_tone(media.audio(output), .2, 1.8, 660)
+
+
 @pytest.mark.parametrize('volume', [1, .5])
 def test_audio_copy_and_volume_filter_preserve_tone(media, volume):
     # cd34ef0: no audio filter permits copy; volume changes must actually be applied.
