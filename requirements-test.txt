@@ -1,5 +1,0 @@
--r requirements.txt
-pytest>=9.1.1,<10
-pytest-xdist>=3.8,<4
-numpy>=2,<3
-ruff>=0.16,<0.17

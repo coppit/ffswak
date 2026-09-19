@@ -13,7 +13,7 @@ Things you can do:
 
 # Getting Started
 
-Make sure you have ffmpeg and ffprobe installed, and that you have Python 3.7 or newer:
+Make sure you have ffmpeg and ffprobe installed, and that you have Python 3.11 or newer:
 
 ```sh
 ffmpeg --version
@@ -21,33 +21,31 @@ ffprobe --version
 python3 --version
 ```
 
-Install the runtime dependencies:
+Install [uv](https://docs.astral.sh/uv/):
 
 ```sh
-python3 -m pip install -r requirements.txt
+curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-Install the script:
+or on OS X:
 
 ```sh
-mkdir -p ~/.local/bin
+brew install uv
 ```
 
-Optionally, edit the variables at the top to configure the default output dimensions and default output directory.
+Optionally, edit the variables at the top of `ffswak.py` to configure the default output dimensions and default output
+directory.
 
-Save the script to `~/.local/bin/ffswak.py`.
+Then install ffswak with the command:
 
 ```sh
-chmod +x ~/.local/bin/ffswak.py
+uv tool install --python 3.11 .
 ```
-
-You may need to add `~/.local/bin` to your PATH environment variable (e.g. in `~/.bashrc`), then close and reopen your
-shell.
 
 Test it out:
 
 ```sh
-ffswak.py --help
+ffswak --help
 ```
 
 # Usage Examples
@@ -55,7 +53,7 @@ ffswak.py --help
 ## Example 1: Scale and re-encode one video
 
 ```sh
-ffswak.py input.mov
+ffswak input.mov
 ```
 
 Scale down the video to fit in 1920x1080 (or 1080x1920 if it's a portrait video). Re-encode with the HEVC codec,
@@ -69,7 +67,7 @@ input file to the output location and issue a warning.
 ## Example 2: Join clips from two videos, with a fade transition
 
 ```sh
-ffswak.py input1.mov -10 input2.mp4 0:15-1:10
+ffswak input1.mov -10 input2.mp4 0:15-1:10
 ```
 
 Same as above, but join portions of two videos with a .5s fade transition. When possible, the time ranges will be
@@ -85,7 +83,7 @@ input files.
 ## Example 3: Stabilize and join multiple videos
 
 ```sh
-ffswak.py -s input1.mov input2.mov
+ffswak -s input1.mov input2.mov
 ```
 
 Stabilize all the videos and join them. The output file will be named input1-input2.mp4.
@@ -93,7 +91,7 @@ Stabilize all the videos and join them. The output file will be named input1-inp
 ## Example 4: Global versus per-input options
 
 ```sh
-ffswak.py -O ~/Desktop -v 2 -- input1.mov -s input2.mov
+ffswak -O ~/Desktop -v 2 -- input1.mov -s input2.mov
 ```
 
 Increase the volume of all the videos by 100%, but stabilize only the second video. Write the output file to the
@@ -105,7 +103,7 @@ go before the file name, and any time ranges go after the file name.
 ## Example 5: Cropping and slowing one clip
 
 ```sh
-ffswak.py -- input.mov 0-10 -cs .5 -cl bc -s .5 input.mov 10-15 input.mov 15-20
+ffswak -- input.mov 0-10 -cs .5 -cl bc -s .5 input.mov 10-15 input.mov 15-20
 ```
 
 For a 5-second clip in the middle, slow it down 50% and crop it to be 50% of the original size, centered on the bottom
@@ -198,6 +196,6 @@ transitions, and stabilization motion. See [tests/README.md](tests/README.md) fo
 artifacts, and known failures.
 
 ```sh
-python3 -m pip install -r requirements-test.txt
-python3 -m pytest
+uv sync --group test --group lint
+uv run pytest
 ```

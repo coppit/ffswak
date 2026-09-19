@@ -1,31 +1,20 @@
 # Video regression tests
 
-Use Python 3.10+ and pytest 9.1.1 (the latest stable release when this harness was added). The application itself does
-not acquire this newer Python requirement.
+Use Python 3.11+ with the locked development environment:
 
 ```sh
-python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements-test.txt
-.venv/bin/python -m pytest
+uv sync --group test --group lint
+uv run pytest
 ```
 
 The suite runs four tests concurrently using pytest-xdist. Each test retains its own temporary files and command
 logs, and all media assertions still run. Four workers keep concurrency bounded because FFmpeg also uses threads.
-Install the updated `requirements-test.txt` in an existing environment before running the suite.
-
-If you use an existing `python3` environment instead of `.venv`, install dependencies with that same interpreter:
-
-```sh
-python3 -m pip install -r requirements-test.txt
-python3 -m pytest
-```
-
-An `unrecognized arguments: -n` error means pytest-xdist is missing from the environment running pytest. Run the
-installation command above; installing it in a different virtual environment will not fix that interpreter.
+An `unrecognized arguments: -n` error means pytest-xdist is missing from the environment running pytest. Run `uv sync
+--group test`; installing it in a different virtual environment will not fix that interpreter.
 
 Use `python -m pytest -n 0` for sequential execution or debugging, or `python -m pytest -n 2` to reduce CPU and memory
 use. For a focused test, `python -m pytest -n 0 tests/test_metadata_errors.py` avoids worker startup overhead.
-On the development machine, all 130 tests passed in about 23 seconds with four workers, compared with 82 seconds
+On the development machine, all 154 tests passed in about 23 seconds with four workers, compared with 82 seconds
 sequentially. Timing depends on the machine and FFmpeg build.
 
 Interactive runs show a live progress row for each test file. Each row includes a bar and completed/total counts;
@@ -40,7 +29,7 @@ Ruff checks for undefined names and unnecessary `global` declarations. It is a s
 regression suite:
 
 ```sh
-.venv/bin/python -m ruff check .
+uv run ruff check .
 ```
 
 FFmpeg and ffprobe must be on PATH. FFmpeg needs libx265, libx264, libvidstab, ProRes encoding. Missing binaries or

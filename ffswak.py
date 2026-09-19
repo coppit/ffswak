@@ -87,9 +87,9 @@ UNKNOWN_AUDIO_BITRATE = 0
 
 DEFAULT_OUTPUT_DIR = os.path.expanduser(DEFAULT_OUTPUT_DIR)
 
-# Need python 3.7 for ordered dicts
+# Require Python 3.11 so installations receive a currently supported interpreter.
 MIN_PYTHON_MAJOR = 3
-MIN_PYTHON_MINOR = 7
+MIN_PYTHON_MINOR = 11
 
 if sys.version_info < (MIN_PYTHON_MAJOR, MIN_PYTHON_MINOR):
     sys.exit(f"Error: This script requires Python {MIN_PYTHON_MAJOR}.{MIN_PYTHON_MINOR} or newer. "
@@ -912,7 +912,8 @@ class Video(list):
         str += f'frame_rate_limit: {self.frame_rate_limit}\n'
         str += f'output_creation_time: {self.output_creation_time}\n'
 
-        str = str.removesuffix('\n')
+        if str.endswith('\n'):
+            str = str[:-1]
 
         return str
 
