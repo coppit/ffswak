@@ -120,8 +120,8 @@ class DimensionLimit( namedtuple('DimensionLimit', ['type', 'width', 'height']) 
             raise TypeError("Dimension limit type must be a DimensionLimitType.")
         if not isinstance(width, (int, float)) or not isinstance(height, (int, float)):
             raise TypeError("Dimension limit values must be numbers.")
-        if width <= 0 or height <= 0:
-            raise ValueError("Dimension limit values must be positive.")
+        if not math.isfinite(width) or not math.isfinite(height) or width <= 0 or height <= 0:
+            raise ValueError("Dimension limit values must be finite and positive.")
         if type == DimensionLimitType.PIXELS and (not isinstance(width, int) or not isinstance(height, int)):
             raise TypeError("Pixel dimension limits must be integers.")
         if type == DimensionLimitType.RELATIVE and not (width <= 1 and height <= 1):
@@ -1284,7 +1284,8 @@ def global_options_parser():
     global_group = parser.add_argument_group('Global-Only Options',
         description='General options, and options for the output video.')
 
-    global_group.add_argument('-F', '--frame-rate-limit', type=float, default=60.0, help='Maximum frame rate.')
+    global_group.add_argument('-F', '--frame-rate-limit', type=positive_float_type, default=60.0,
+        help='Maximum frame rate.')
     global_group.add_argument('-D', '--dimensions-limit', type=dimensions_type, default=MAX_DIMENSIONS,
         help='Maximum dimensions. .5 means 50%% as wide and tall; .5,1 means half as wide, full height; '
           '16:9 means the largest possible video with that aspect ratio; 1280x720 means exactly that size')
@@ -1345,7 +1346,7 @@ def dimensions_type(arg_value):
             limit_type = DimensionLimitType.RELATIVE
 
         return DimensionLimit(limit_type, width, height)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         raise argparse.ArgumentTypeError(f'Invalid dimensions format: "{arg_value}". Expected format is ".5", '
             '".5,1", "16:9", or "1280x720"')
 
@@ -1356,18 +1357,25 @@ def crop_size_type(arg_value):
     try:
         if ':' in arg_value:
             width, height = map(float, arg_value.split(':'))
-            return (CropType.ASPECT, width, height)
+            crop_type = CropType.ASPECT
         elif 'x' in arg_value:
             width, height = map(int, arg_value.split('x'))
-            return (CropType.PIXELS, width, height)
+            crop_type = CropType.PIXELS
         else:
             if ',' in arg_value:
                 width, height = map(float, arg_value.split(','))
             else:
                 width, height = float(arg_value), float(arg_value)
 
-            return (CropType.FRACTION, width, height)
-    except ValueError:
+            crop_type = CropType.FRACTION
+
+        if not math.isfinite(width) or not math.isfinite(height) or width <= 0 or height <= 0:
+            raise ValueError
+        if crop_type == CropType.FRACTION and (width > 1 or height > 1):
+            raise ValueError
+
+        return (crop_type, width, height)
+    except (TypeError, ValueError, OverflowError):
         raise argparse.ArgumentTypeError(f'Invalid crop format: "{arg_value}". '
             'Expected format is ".5", ".5,.9", "16:9", or "1280x720"')
 
@@ -1404,8 +1412,11 @@ def crop_location_type(arg_value):
 
 #-----------------------------------------------------------------------------------------------------------------------
 
-def time_type(arg_value):
-    return in_seconds(arg_value)
+def nonnegative_time_type(arg_value):
+    try:
+        return in_seconds(arg_value)
+    except (TypeError, ValueError, OverflowError):
+        raise argparse.ArgumentTypeError(f'"{arg_value}" must be a finite, non-negative time.')
 
 #-----------------------------------------------------------------------------------------------------------------------
 
@@ -1440,6 +1451,9 @@ def in_seconds(time_string):
 
     rest, _, fraction_digits = time_string.partition('.')
 
+    if fraction_digits and not fraction_digits.isdigit():
+        raise ValueError(f'{time_string} has an invalid fractional second')
+
     if rest.count(':') > 2:
         raise ValueError(f'{time_string} has more than two ":"')
 
@@ -1452,10 +1466,15 @@ def in_seconds(time_string):
     seconds = int(seconds)
     fraction = 0 if fraction_digits == '' else float('.'+fraction_digits)
 
-    if hours > 0 and minutes > 59 or minutes > 0 and seconds > 59:
+    if hours < 0 or minutes < 0 or seconds < 0 or \
+            hours > 0 and minutes > 59 or minutes > 0 and seconds > 59:
         raise ValueError(f'{time_string} is not a valid [[HH:]MM:]SS value')
 
-    return 3600 * hours + 60 * minutes + seconds + fraction
+    total_seconds = 3600 * hours + 60 * minutes + seconds + fraction
+    if not math.isfinite(total_seconds) or total_seconds < 0:
+        raise ValueError(f'{time_string} is not a finite, non-negative time')
+
+    return total_seconds
 
 #-----------------------------------------------------------------------------------------------------------------------
 
@@ -1505,8 +1524,8 @@ def time_range_type(arg_value):
 #-----------------------------------------------------------------------------------------------------------------------
 
 def video_file_type(arg_value):
-    if not os.path.exists(arg_value):
-        raise argparse.ArgumentTypeError(f'File "{arg_value}" does not exist.')
+    if not os.path.isfile(arg_value):
+        raise argparse.ArgumentTypeError(f'File "{arg_value}" does not exist or is not a regular file.')
 
     return arg_value
 
@@ -1525,8 +1544,40 @@ def positive_int_type(arg_value):
 
 #-----------------------------------------------------------------------------------------------------------------------
 
+def positive_float_type(arg_value):
+    try:
+        value = float(arg_value)
+    except (TypeError, ValueError, OverflowError):
+        raise argparse.ArgumentTypeError(f'"{arg_value}" must be a finite, positive number.')
+
+    if not math.isfinite(value) or value <= 0:
+        raise argparse.ArgumentTypeError(f'"{arg_value}" must be a finite, positive number.')
+
+    return value
+
+#-----------------------------------------------------------------------------------------------------------------------
+
+def nonnegative_float_type(arg_value):
+    try:
+        value = float(arg_value)
+    except (TypeError, ValueError, OverflowError):
+        raise argparse.ArgumentTypeError(f'"{arg_value}" must be a finite, non-negative number.')
+
+    if not math.isfinite(value) or value < 0:
+        raise argparse.ArgumentTypeError(f'"{arg_value}" must be a finite, non-negative number.')
+
+    return value
+
+#-----------------------------------------------------------------------------------------------------------------------
+
 def rotation_type(arg_value):
-    angle = float(arg_value)
+    try:
+        angle = float(arg_value)
+    except (TypeError, ValueError, OverflowError):
+        raise argparse.ArgumentTypeError(f'"{arg_value}" must be a finite number of degrees.')
+
+    if not math.isfinite(angle):
+        raise argparse.ArgumentTypeError(f'"{arg_value}" must be a finite number of degrees.')
 
     angle %= 360
 
@@ -1549,19 +1600,19 @@ def add_clip_options(parser, global_args=None):
         default=default('crop_size', (CropType.FRACTION, 1.0, 1.0)),
         help='Cropped portion size. .5 means 50%% as wide and tall; .5,1 means half as wide, full height; '
             '1280x720 means exactly that size')
-    parser.add_argument('-p', '--speedup', type=float, default=default('speedup', 1.0),
+    parser.add_argument('-p', '--speedup', type=positive_float_type, default=default('speedup', 1.0),
         help='Change the speed. 2 means twice as fast. Audio tempo is adjusted to match.')
     parser.add_argument('-r', '--rotate', type=rotation_type, default=default('rotate', 0),
         help='Rotate the video, cropping as needed. Positive values are clockwise.')
-    parser.add_argument('-v', '--volume', type=float, default=default('volume', 1.0),
+    parser.add_argument('-v', '--volume', type=nonnegative_float_type, default=default('volume', 1.0),
         help='Modify volume level. 2 means twice as loud. 0 means omit the audio track.')
     parser.add_argument('-s', '--stabilize', action='store_true', default=default('stabilize', False),
         help='Stabilize the video')
-    parser.add_argument('-t', '--tripod', type=time_type, default=default('tripod', None),
+    parser.add_argument('-t', '--tripod', type=nonnegative_time_type, default=default('tripod', None),
         help='Enable tripod-mode stabilization, using the frame at the specified time as the reference.')
     parser.add_argument('-R', '--reverse', action='store_true', default=default('reverse', False),
         help='Reverse the video.')
-    parser.add_argument('-T', '--transition-duration', type=time_type,
+    parser.add_argument('-T', '--transition-duration', type=nonnegative_time_type,
         default=default('transition_duration', 0.5),
         help='Transition duration when concatenating ranges, in TIME FORMAT.')
     parser.add_argument('-I', '--interlace-test', action='store_true', default=default('interlace_test', False),

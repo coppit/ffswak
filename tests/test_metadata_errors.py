@@ -128,6 +128,48 @@ def test_option_parsers_report_invalid_values(app, parser, value):
         getattr(app, parser)(value)
 
 
+@pytest.mark.parametrize('parser,values', [
+    ('positive_float_type', ['0', '-1', 'nan', 'inf', '-inf']),
+    ('nonnegative_float_type', ['-1', 'nan', 'inf', '-inf']),
+    ('nonnegative_time_type', ['-1', '1:-1', '.nan', '.inf', '1.2e3']),
+    ('rotation_type', ['nan', 'inf', '-inf']),
+    ('dimensions_type', ['0x10', 'nan:1', '.nan']),
+    ('crop_size_type', ['0x10', '-1x10', 'nan:1', '.nan', '1.1']),
+])
+def test_numeric_option_parsers_reject_non_finite_and_out_of_range_values(app, parser, values):
+    for value in values:
+        with pytest.raises(app.argparse.ArgumentTypeError):
+            getattr(app, parser)(value)
+
+
+def test_numeric_option_parsers_accept_valid_boundary_values(app):
+    assert app.positive_float_type('.1') == .1
+    assert app.nonnegative_float_type('0') == 0
+    assert app.nonnegative_time_type('0') == 0
+    assert app.rotation_type('-90') == 270
+
+
+def test_all_numeric_cli_options_use_validating_parsers(app):
+    global_parser = app.global_options_parser()
+    global_args = global_parser.parse_args([])
+    clip_parser = app.ClipArgumentParser(global_parser, global_args)
+
+    assert global_parser._option_string_actions['-F'].type is app.positive_float_type
+    assert global_parser._option_string_actions['-D'].type is app.dimensions_type
+    assert clip_parser._option_string_actions['-cs'].type is app.crop_size_type
+    assert clip_parser._option_string_actions['-cl'].type is app.crop_location_type
+    assert clip_parser._option_string_actions['-p'].type is app.positive_float_type
+    assert clip_parser._option_string_actions['-r'].type is app.rotation_type
+    assert clip_parser._option_string_actions['-v'].type is app.nonnegative_float_type
+    assert clip_parser._option_string_actions['-t'].type is app.nonnegative_time_type
+    assert clip_parser._option_string_actions['-T'].type is app.nonnegative_time_type
+
+
+def test_video_file_parser_rejects_a_directory(app, tmp_path):
+    with pytest.raises(app.argparse.ArgumentTypeError):
+        app.video_file_type(str(tmp_path))
+
+
 def test_temporary_file_owner_removes_paths_it_created(app):
     temporary_files = app.TemporaryFiles()
     path = temporary_files.create('input.mov')
