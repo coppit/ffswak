@@ -114,6 +114,50 @@ def test_audio_copy_requires_a_codec_supported_by_the_output_container(app):
     assert video.can_copy_audio
 
 
+def test_output_metadata_keeps_agreed_values_and_uses_each_clip_start_for_creation_time(app, monkeypatch):
+    video = app.Video('/tmp', 'output.mp4', app.Dimensions(320, 240), 24)
+    video.extend([
+        SimpleNamespace(input_file='first.mov', start=10, source_metadata={
+            'creation_time': '2024-01-02T03:04:05.000000Z', 'title': 'Shared title',
+            'location': '+40.0-074.0/', 'comment': 'First'}),
+        SimpleNamespace(input_file='second.mov', start=20, source_metadata={
+            'creation_time': '2023-01-02T03:04:05.000000Z', 'title': 'Shared title',
+            'location': '+40.0-074.0/', 'comment': 'Second'}),
+    ])
+    messages = []
+    monkeypatch.setattr(app, 'cprint', lambda message: messages.append(message))
+
+    assert video.output_creation_time == '2023-01-02T03:04:25.000000Z'
+    assert video.output_metadata == {
+        'title': 'Shared title',
+        'location': '+40.0-074.0/',
+        'creation_time': '2023-01-02T03:04:25.000000Z',
+    }
+    assert 'comment' in ' '.join(messages)
+
+
+def test_output_metadata_treats_missing_values_as_dont_care(app):
+    video = app.Video('/tmp', 'output.mp4', app.Dimensions(320, 240), 24)
+    video.extend([
+        SimpleNamespace(input_file='first.mov', start=0, source_metadata={
+            'creation_time': '2024-01-02T03:04:05.000000Z', 'artist': 'A. Artist'}),
+        SimpleNamespace(input_file='second.mov', start=0,
+                        source_metadata={'creation_time': '2024-01-02T03:04:05.000000Z'}),
+    ])
+
+    assert video.output_metadata['artist'] == 'A. Artist'
+
+
+def test_compiled_output_command_repeats_each_metadata_option(app):
+    video = SimpleNamespace(output_file='output.mp4', output_metadata={'title': 'A title', 'artist': 'An artist'})
+    output = app.ffmpeg.output(app.ffmpeg.input('input.mp4').video, video.output_file)
+
+    command = app.compile_output_command(output, video)
+    output_index = command.index(video.output_file)
+    assert command[output_index-4:output_index] == [
+        '-metadata:g', 'title=A title', '-metadata:g', 'artist=An artist']
+
+
 @pytest.mark.parametrize('value,limit_type,width,height', [
     ('1280x720', 'PIXELS', 1280, 720),
     ('.5', 'RELATIVE', .5, .5),

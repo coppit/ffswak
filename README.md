@@ -170,11 +170,15 @@ wrong. e.g. Width and height will be swapped when all the inputs are portrait in
 
 # Known Issues and Limitations
 
-iPhones produce extra metadata streams. Those get lost if the file is re-encoded, as does lots of metadata tags. Run
-ffprobe on the input and output to compare.
+iPhones produce extra metadata streams. Those get lost if the file is re-encoded. ffswak preserves a small whitelist of
+global descriptive tags only when all non-blank source values agree. (Missing values do not prevent preservation.) It
+computes `creation_time` from the earliest selected source clip (each file's recording time plus the start offset of
+each clip). The whitelist includes GPS/location tags for personal-media use, so remove location metadata before sharing
+a video if you do not want to disclose where it was recorded. Alternatively, remove location tags from
+`PRESERVED_METADATA_KEYS` in the script. Run ffprobe on the input and output to compare metadata.
 
-I add features as I need them. Feel free to suggest enhancements at the
-[github project page](https://github.com/coppit/ffswak).
+I add features as I need them. Feel free to suggest enhancements at the [github project
+page](https://github.com/coppit/ffswak).
 
 # Author
 
@@ -182,16 +186,15 @@ David Coppit `<david@coppit.org>`
 
 # License
 
-ffswak is licensed under the GNU General Public License, version 3 only.
-See [LICENSE](LICENSE). Its interlace-detection policy is adapted from mpv's
-[`TOOLS/idet.sh`](https://github.com/mpv-player/mpv/blob/master/TOOLS/idet.sh),
-which is GPL-2.0-or-later and therefore compatible with GPL-3.0.
+ffswak is licensed under the GNU General Public License, version 3 only. See [LICENSE](LICENSE). Its
+interlace-detection policy is adapted from mpv's
+[`TOOLS/idet.sh`](https://github.com/mpv-player/mpv/blob/master/TOOLS/idet.sh), which is GPL-2.0-or-later and therefore
+compatible with GPL-3.0.
 
 # Development tests
 
-The pytest harness generates synthetic videos, runs the real CLI, and checks
-output pixels, timing, mixed pixel formats, transitions, and stabilization motion.
-See [tests/README.md](tests/README.md) for setup, comparison tolerances, review
+The pytest harness generates synthetic videos, runs the real CLI, and checks output pixels, timing, mixed pixel formats,
+transitions, and stabilization motion. See [tests/README.md](tests/README.md) for setup, comparison tolerances, review
 artifacts, and known failures.
 
 ```sh

@@ -43,6 +43,13 @@ CRF = 20
 AUDIO_CODEC = 'aac'
 AUDIO_BITRATE = '192k'
 
+# Global descriptive tags that can safely describe an edited output. A tag is copied only when every non-blank source
+# value agrees; missing values are treated as "don't care." Location is intentionally included for personal-media use.
+PRESERVED_METADATA_KEYS = [
+    'title', 'artist', 'author', 'album', 'album_artist', 'genre', 'composer', 'copyright', 'description', 'comment',
+    'make', 'model', 'location', 'location-eng', 'com.apple.quicktime.location.ISO6709',
+]
+
 # Stream copying is only safe when the destination container supports the input codec. Keep this deliberately
 # conservative: re-encoding a compatible-but-unlisted codec is preferable to producing an FFmpeg muxer failure.
 AUDIO_COPY_CODECS_BY_EXTENSION = {
@@ -772,23 +779,56 @@ class Video(list):
 
     @property
     def output_creation_time(self):
-        creation_times = [f.creation_time for f in self if f.creation_time is not None]
+        creation_times = []
 
-        # Fall back to file creation times
-        if not creation_times:
-            creation_times = [file_creation_time_iso8601(f.input_file) for f in self]
+        for clip in self:
+            creation_time = clip.source_metadata.get('creation_time') or file_creation_time_iso8601(clip.input_file)
 
-        # Sanity check. Sometimes the file time stamps are garbage.
-        creation_times = [t for t in creation_times if t > '1971']
+            # Sanity check. Sometimes file timestamps are garbage. Each selected clip represents a different moment
+            # in its source, so apply its own start offset before choosing the earliest output moment.
+            if creation_time > '1971':
+                creation_times += [adjust_iso8601_time(creation_time, clip.start)]
 
         if not creation_times:
             return None
 
-        min_time = min(creation_times)
+        return min(creation_times)
 
-        offset = self[0].start
+    #-------------------------------------------------------------------------------------------------------------------
 
-        return adjust_iso8601_time(min_time, offset)
+    @property
+    def output_metadata(self):
+        # Command construction can inspect metadata more than once (for debug output and execution). Cache the result
+        # so that a conflict warning is emitted once per output, not once per compiled command.
+        if hasattr(self, '_output_metadata'):
+            return self._output_metadata
+
+        metadata = {}
+        conflicting_keys = []
+
+        for key in PRESERVED_METADATA_KEYS:
+            values = []
+            for clip in self:
+                for source_key, value in clip.source_metadata.items():
+                    if str(source_key).lower() == key.lower() and value is not None and str(value).strip():
+                        values += [(str(value).strip(), str(value))]
+
+            normalized_values = {value[0] for value in values}
+            if len(normalized_values) == 1:
+                # Preserve the first source spelling and value after comparing trimmed values.
+                metadata[key] = values[0][1]
+            elif len(normalized_values) > 1:
+                conflicting_keys += [key]
+
+        if conflicting_keys:
+            cprint(f'[yellow1]WARNING[/]: Not preserving source metadata with conflicting values: '
+                f'{", ".join(conflicting_keys)}.')
+
+        if self.output_creation_time is not None:
+            metadata['creation_time'] = self.output_creation_time
+
+        self._output_metadata = metadata
+        return self._output_metadata
 
     #-------------------------------------------------------------------------------------------------------------------
 
@@ -923,7 +963,7 @@ class Clip:
     #-------------------------------------------------------------------------------------------------------------------
 
     def _set_attributes(self):
-        self.input_dims, self.input_duration, self.creation_time = None, None, None
+        self.input_dims, self.input_duration, self.source_metadata = None, None, None
         self.video_bitrate, self.audio_bitrate, self.avg_frame_rate = None, None, None
         self.audio_stream_index, self.audio_codec = None, None
 
@@ -937,7 +977,7 @@ class Clip:
             except (TypeError, ValueError):
                 self._probe_metadata_error(self.input_file, 'format duration')
 
-            self.creation_time = (format_info.get('tags') or {}).get('creation_time')
+            self.source_metadata = dict(format_info.get('tags') or {})
 
             # Get the streams information
             streams = probe_result.get('streams', [])
@@ -2476,9 +2516,6 @@ def build_encode_command_with_parameters(video, f_previous_video, f_previous_aud
             named_params['acodec'] = AUDIO_CODEC
             named_params['audio_bitrate'] = AUDIO_BITRATE
 
-    if video.output_duration is not None:
-        named_params['metadata:g'] = f'creation_time={video.output_creation_time}'
-
     # .m4v can contain HEVC in an MP4 container, but FFmpeg's extension guessing
     # selects the legacy iPod muxer, which rejects HEVC. Override only that case.
     if os.path.splitext(video.output_file)[1].lower() == '.m4v':
@@ -2497,6 +2534,25 @@ def build_encode_command(video):
     f_previous_audio = build_audio_encode_command(video)
 
     return build_encode_command_with_parameters(video, f_previous_video, f_previous_audio)
+
+#-----------------------------------------------------------------------------------------------------------------------
+
+def add_output_metadata_options(command, output_file, metadata):
+    # ffmpeg-python models output options as a dictionary, but FFmpeg needs one repeated -metadata:g option per tag.
+    # Insert those narrowly scoped options after graph construction and immediately before the output filename.
+    output_index = command.index(output_file)
+    metadata_options = []
+
+    for key, value in metadata.items():
+        metadata_options += ['-metadata:g', f'{key}={value}']
+
+    return command[:output_index] + metadata_options + command[output_index:]
+
+#-----------------------------------------------------------------------------------------------------------------------
+
+def compile_output_command(f_output, video, overwrite_output=False):
+    command = ffmpeg.compile(f_output, overwrite_output=overwrite_output)
+    return add_output_metadata_options(command, video.output_file, video.output_metadata)
 
 #-----------------------------------------------------------------------------------------------------------------------
 
@@ -2811,13 +2867,13 @@ def prepare(video):
 def encode_video(video):
     f_output = build_encode_command(video)
 
-    dprint_command('Encode command', ffmpeg.compile(f_output))
+    dprint_command('Encode command', compile_output_command(f_output, video))
 
     if _debug:
         dprint('<Skipping ffmpeg encoding command>')
         return
 
-    run_ffmpeg_with_progress(ffmpeg.compile(f_output, overwrite_output=True), 'Running ffmpeg to encode video...',
+    run_ffmpeg_with_progress(compile_output_command(f_output, video, overwrite_output=True), 'Running ffmpeg to encode video...',
         video.output_file, video.output_duration, True)
 
     os.utime(video.output_file,
@@ -2847,7 +2903,7 @@ def copy_video(video):
 
     f_output = build_copy_command(video)
 
-    dprint_command('Copy command', ffmpeg.compile(f_output))
+    dprint_command('Copy command', compile_output_command(f_output, video))
 
     if _debug:
         dprint('<Skipping ffmpeg copy command>')
@@ -2855,7 +2911,7 @@ def copy_video(video):
 
     cprint(f"[violet]Deleting the encoded file and re-running ffmpeg, copying the video stream to avoid quality loss")
 
-    run_ffmpeg(ffmpeg.compile(f_output, overwrite_output=True), video.output_file)
+    run_ffmpeg(compile_output_command(f_output, video, overwrite_output=True), video.output_file)
 
     os.utime(video.output_file,
         (os.path.getatime(video[0].input_file), parse_to_dtu(video.output_creation_time).timestamp()))
