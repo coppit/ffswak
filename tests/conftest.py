@@ -1,4 +1,5 @@
 """Real media helpers; all generated files and command logs live in pytest's temp dir."""
+import copy
 import json
 import os
 from pathlib import Path
@@ -34,6 +35,7 @@ def run(command, *, cwd, data=None):
 class Media:
     def __init__(self, directory):
         self.directory = directory
+        self._probe_cache = {}
 
     def encode(self, name, frames, *, encoding='h264'):
         """Use viewable H.264 by default; special formats must be requested explicitly."""
@@ -116,8 +118,7 @@ class Media:
         return np.frombuffer(raw, dtype='<f4')
 
     def streams(self, path):
-        return json.loads(run(['ffprobe', '-v', 'error', '-show_streams', '-of', 'json', path],
-                              cwd=self.directory))['streams']
+        return self._probe(path, ('-show_streams',))['streams']
 
     def process(self, *args, name='output.mp4'):
         output = self.directory / name
@@ -130,9 +131,21 @@ class Media:
         return output
 
     def probe(self, path):
-        return json.loads(run(['ffprobe', '-v', 'error', '-select_streams', 'v:0',
-                               '-show_streams', '-show_frames', '-of', 'json', path],
-                              cwd=self.directory))
+        return self._probe(path, ('-select_streams', 'v:0', '-show_streams', '-show_frames'))
+
+    def _probe(self, path, options):
+        path = Path(path)
+        path = (self.directory / path).resolve() if not path.is_absolute() else path.resolve()
+        stat = path.stat()
+        signature = (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+        key = (path, options)
+        cached = self._probe_cache.get(key)
+        if cached is None or cached[0] != signature:
+            result = json.loads(run(['ffprobe', '-v', 'error', *options, '-of', 'json', path],
+                                    cwd=self.directory))
+            self._probe_cache[key] = (signature, result)
+        # Preserve the previous behavior: callers can mutate their result without affecting later probes.
+        return copy.deepcopy(self._probe_cache[key][1])
 
     def preview(self, path):
         """Write a player-friendly review copy; assertions still use the original."""

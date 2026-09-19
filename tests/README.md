@@ -56,6 +56,11 @@ Pytest discovers the test functions in `test_*.py` and supplies the `media` fixt
 its own temporary directory and a `Media` helper that operates there. The tests define the scene and expected result;
 the helper handles video files and subprocesses.
 
+Each `Media` helper caches probe results within its test. Repeated metadata/frame requests for an unchanged file
+reuse the result; different probe options stay separate. File identity, size, and modification/change timestamps
+invalidate cached results when inputs or outputs change. Callers receive independent copies of the metadata.
+The cache is discarded after each test and requires no shared files or worker synchronization.
+
 The data flows through four steps:
 
 1. **Generate inputs.** A test builds a NumPy array of RGB frames with known content. `Media.encode()` pipes those
