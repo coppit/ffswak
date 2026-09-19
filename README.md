@@ -1,6 +1,6 @@
 # ffswak.py
 
-A Python wrapper for `ffmpeg` that simplies common video editing tasks.
+A Python wrapper for `ffmpeg` that simplifies common video editing tasks.
 
 Things you can do:
 
