@@ -1550,7 +1550,7 @@ def add_clip_options(parser, global_args=None):
         help='Cropped portion size. .5 means 50%% as wide and tall; .5,1 means half as wide, full height; '
             '1280x720 means exactly that size')
     parser.add_argument('-p', '--speedup', type=float, default=default('speedup', 1.0),
-        help='Change the speed. 2 means twice as fast. Disables audio.')
+        help='Change the speed. 2 means twice as fast. Audio tempo is adjusted to match.')
     parser.add_argument('-r', '--rotate', type=rotation_type, default=default('rotate', 0),
         help='Rotate the video, cropping as needed. Positive values are clockwise.')
     parser.add_argument('-v', '--volume', type=float, default=default('volume', 1.0),

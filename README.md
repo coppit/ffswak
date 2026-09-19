@@ -153,7 +153,7 @@ Video Options:
   -cs, --crop-size CROP_SIZE
                         Cropped portion size. .5 means 50% as wide and tall; .5,1 means half as wide, full height; 1280x720 means exactly that size
   -p, --speedup SPEEDUP
-                        Change the speed. 2 means twice as fast. Disables audio.
+                        Change the speed. 2 means twice as fast. Audio tempo is adjusted to match.
   -r, --rotate ROTATE   Rotate the video, cropping as needed. Positive values are clockwise.
   -v, --volume VOLUME   Modify volume level. 2 means twice as loud. 0 means omit the audio track.
   -s, --stabilize       Stabilize the video
