@@ -53,7 +53,7 @@ def test_name_collision_retries_and_resolution_stays_fixed(app, tmp_path, monkey
     draws = iter([0x123, 0xabc])
     monkeypatch.setattr(app.random, 'randrange', lambda _: next(draws))
     video = app.Video(str(tmp_path), str(requested) if explicit else None, app.Dimensions(320, 240), 24)
-    video.append(SimpleNamespace(input_file='movie.mov'))
+    video.append(SimpleNamespace(input_file='movie.mov', video_bitrate=500000, audio_bitrate=None))
     video.clips_adjusted = True
     resolved = tmp_path / 'movie-abc.mp4'
     assert video.output_file == str(resolved)
@@ -133,7 +133,7 @@ def test_default_output_directory_only_applies_to_generated_names(app, tmp_path,
     monkeypatch.chdir(tmp_path)
     for requested, expected in [(None, default / 'movie.mp4'), ('nested/file.mp4', tmp_path / 'nested/file.mp4')]:
         video = app.Video(None, requested, app.Dimensions(320, 240), 24)
-        video.append(SimpleNamespace(input_file='movie.mov'))
+        video.append(SimpleNamespace(input_file='movie.mov', video_bitrate=500000, audio_bitrate=None))
         video.clips_adjusted = True
         assert video.output_file == str(expected)
 

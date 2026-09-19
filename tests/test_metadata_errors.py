@@ -30,7 +30,7 @@ def probe_data():
 
 def clip(app):
     return app.Clip(input_file='synthetic.mov', start=0, end=None, speedup=1,
-                    volume=1, stabilize=False, interlace_test=False)
+                    volume=1, stabilize=False, tripod=None, interlace_test=False)
 
 
 def test_missing_stream_bitrate_uses_container_bitrate(app, monkeypatch, probe_data):
@@ -195,8 +195,8 @@ def test_deinterlacing_uses_detected_field_order(app, interlace_type, expected):
 def test_upstream_interlace_patterns(app, monkeypatch, filename, expected):
     fixture = ROOT / 'tests' / 'fixtures' / 'interlacing' / filename
     monkeypatch.setattr(app.time, 'sleep', lambda _: None)
-    app.detect_interlace.cache_clear()
-    assert app.detect_interlace(True, str(fixture)) == app.InterlaceType[expected]
+    app.detect_interlacing.cache_clear()
+    assert app.detect_interlacing(True, str(fixture)) == app.InterlaceType[expected]
 
 
 def test_subprocess_output_drains_both_pipes_and_retains_partial_lines(app):

@@ -97,7 +97,7 @@ def test_audio_only_input_keeps_audio_and_uses_an_audio_container(media):
     requested_output = media.directory / 'output.mp4'
     output = requested_output.with_suffix('.m4a')
     stdout = run([sys.executable, ROOT / 'ffswak.py', '-o', requested_output, '-v', '.5', source], cwd=media.directory)
-    assert b'changing filename extension from .mp4 to .m4a' in stdout
+    assert b'Changing filename extension from .mp4 to .m4a' in stdout
     assert output.is_file()
     streams = media.streams(output)
     assert [stream['codec_type'] for stream in streams] == ['audio']
