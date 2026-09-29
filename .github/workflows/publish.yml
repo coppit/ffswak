@@ -1,0 +1,42 @@
+name: Publish to PyPI
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  checks:
+    uses: ./.github/workflows/package.yml
+    permissions:
+      contents: read
+
+  publish:
+    needs: checks
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/ffswak/
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+      - name: Confirm that the tag matches the package version
+        run: |
+          version="$(python - <<'PY'
+          import tomllib
+          from pathlib import Path
+
+          with Path('pyproject.toml').open('rb') as file:
+              print(tomllib.load(file)['project']['version'])
+          PY
+          )"
+          test "v${version}" = "$GITHUB_REF_NAME"
+      - run: uv build --no-sources
+      - run: uv publish

@@ -254,6 +254,42 @@ def test_missing_external_programs_produces_an_actionable_error(app, monkeypatch
     assert 'PATH' in messages[0]
 
 
+@pytest.mark.parametrize('filters,missing', [
+    ('', ['vidstabdetect', 'vidstabtransform']),
+    ('vidstabdetect', ['vidstabtransform']),
+    ('vidstabtransform', ['vidstabdetect']),
+    ('vidstabdetect vidstabtransform', []),
+])
+def test_external_program_check_warns_about_missing_stabilization(app, monkeypatch, filters, missing):
+    messages = []
+    monkeypatch.setattr(app.shutil, 'which', lambda program: '/usr/bin/' + program)
+    monkeypatch.setattr(app.subprocess, 'run', lambda *args, **kwargs: SimpleNamespace(
+        stdout='\n'.join(f' ... {name} V->V Stabilize video' for name in filters.split())))
+    monkeypatch.setattr(app, 'eprint', messages.append)
+    app.check_external_programs()
+    if missing:
+        assert len(messages) == 1
+        assert ', '.join(missing) in messages[0]
+        assert 'libvidstab' in messages[0]
+        assert 'ffmpeg-full' in messages[0]
+    else:
+        assert messages == []
+
+
+def test_external_program_check_warns_if_filter_query_fails(app, monkeypatch):
+    messages = []
+    monkeypatch.setattr(app.shutil, 'which', lambda program: '/usr/bin/' + program)
+
+    def fail(*args, **kwargs):
+        raise app.subprocess.TimeoutExpired(args[0], 10)
+
+    monkeypatch.setattr(app.subprocess, 'run', fail)
+    monkeypatch.setattr(app, 'eprint', messages.append)
+    app.check_external_programs()
+    assert len(messages) == 1
+    assert 'Cannot check FFmpeg stabilization support' in messages[0]
+
+
 def test_tripod_implies_stabilization_and_uses_each_filter_option_type(app):
     clip = SimpleNamespace(stabilize=False, tripod=1, video_bitrate=100000, mincontrast=.1, shakiness=8,
                            avg_frame_rate=app.Fraction(24, 1), transforms_file='transforms.trf', smoothing=20)

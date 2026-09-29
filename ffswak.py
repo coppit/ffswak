@@ -3044,12 +3044,24 @@ def check_external_programs():
     required_programs = (FFMPEG, 'ffprobe')
     missing_programs = [program for program in required_programs if shutil.which(program) is None]
 
-    if not missing_programs:
+    if missing_programs:
+        eprint(f'[red]Error[/]: Required external program(s) not found on PATH: {", ".join(missing_programs)}. '
+            'Install FFmpeg and ensure both ffmpeg and ffprobe are available on PATH.')
+        sys.exit(1)
+
+    try:
+        result = subprocess.run([FFMPEG, '-hide_banner', '-filters'],
+            capture_output=True, text=True, check=True, timeout=10)
+    except (OSError, subprocess.SubprocessError) as error:
+        eprint(f'[yellow1]WARNING[/]: Cannot check FFmpeg stabilization support: {error}')
         return
 
-    eprint(f'[red]Error[/]: Required external program(s) not found on PATH: {", ".join(missing_programs)}. '
-        'Install FFmpeg and ensure both ffmpeg and ffprobe are available on PATH.')
-    sys.exit(1)
+    filters = {fields[1] for line in result.stdout.splitlines() if len(fields := line.split()) >= 2}
+    missing_filters = [name for name in ('vidstabdetect', 'vidstabtransform') if name not in filters]
+    if missing_filters:
+        eprint(f'[yellow1]WARNING[/]: FFmpeg is missing stabilization filter(s): {", ".join(missing_filters)}. '
+            'Stabilization (-s/--stabilize or -t/--tripod) requires FFmpeg built with libvidstab. '
+            'On macOS, run "brew install ffmpeg-full" and put its bin directory first on PATH.')
 
 #-----------------------------------------------------------------------------------------------------------------------
 
