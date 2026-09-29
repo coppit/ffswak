@@ -243,6 +243,17 @@ def test_compute_fps_uses_the_supplied_video_not_module_state(app, monkeypatch):
     assert isinstance(filters[0], app.Filter)
 
 
+def test_missing_external_programs_produces_an_actionable_error(app, monkeypatch):
+    messages = []
+    monkeypatch.setattr(app.shutil, 'which', lambda program: '/usr/bin/ffmpeg' if program == 'ffmpeg' else None)
+    monkeypatch.setattr(app, 'eprint', lambda message: messages.append(message))
+    with pytest.raises(SystemExit) as error:
+        app.check_external_programs()
+    assert error.value.code == 1
+    assert 'ffprobe' in messages[0]
+    assert 'PATH' in messages[0]
+
+
 def test_tripod_implies_stabilization_and_uses_each_filter_option_type(app):
     clip = SimpleNamespace(stabilize=False, tripod=1, video_bitrate=100000, mincontrast=.1, shakiness=8,
                            avg_frame_rate=app.Fraction(24, 1), transforms_file='transforms.trf', smoothing=20)

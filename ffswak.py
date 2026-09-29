@@ -3040,7 +3040,24 @@ def compute_output_dimensions(video):
 
 #-----------------------------------------------------------------------------------------------------------------------
 
+def check_external_programs():
+    required_programs = (FFMPEG, 'ffprobe')
+    missing_programs = [program for program in required_programs if shutil.which(program) is None]
+
+    if not missing_programs:
+        return
+
+    eprint(f'[red]Error[/]: Required external program(s) not found on PATH: {", ".join(missing_programs)}. '
+        'Install FFmpeg and ensure both ffmpeg and ffprobe are available on PATH.')
+    sys.exit(1)
+
+#-----------------------------------------------------------------------------------------------------------------------
+
 def main():
+    # Let argparse render help without requiring FFmpeg to be installed.
+    if '--help' not in sys.argv:
+        check_external_programs()
+
     video = parse_arguments()
 
     prepare(video)
