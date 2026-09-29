@@ -967,6 +967,7 @@ class Clip:
         self.input_dims, self.input_duration, self.source_metadata = None, None, None
         self.video_bitrate, self.audio_bitrate, self.avg_frame_rate = None, None, None
         self.audio_stream_index, self.audio_codec = None, None
+        self.color_space = None
 
         try:
             probe_result = ffprobe(self.input_file)
@@ -1007,6 +1008,7 @@ class Clip:
                 self.video_bitrate = self._probe_int(video_bitrate, self.input_file, 'video bitrate')
 
                 self.pixel_format = self._probe_string(stream.get('pix_fmt'), self.input_file, 'video pixel format')
+                self.color_space = stream.get('color_space')
 
                 # Parse frame rate
                 fps_str = self._probe_string(stream.get('avg_frame_rate'), self.input_file, 'average frame rate')
@@ -2137,6 +2139,21 @@ def compute_stabilize(clip, kind, skip_stabilization):
 def compute_color(clip, video):
     clip_pxl_fmt = parse_pixel_format(clip.pixel_format)
     video_pxl_fmt = parse_pixel_format(video.max_pixel_format)
+
+    # Older FFmpeg versions negotiate pixel formats across concat/xfade, but not
+    # color matrices. Normalize explicitly when joining differently tagged SDR
+    # YUV clips, using the first clip's matrix. Leave unknown and HDR matrices alone.
+    visual_clips = [item for item in video if item.video_bitrate is not None]
+    matrices = [getattr(item, 'color_space', None) for item in visual_clips]
+    sdr_matrices = {'bt709', 'bt470bg', 'smpte170m', 'smpte240m', 'fcc'}
+    if (len(set(matrices)) > 1 and all(matrix in sdr_matrices for matrix in matrices)
+            and all(parse_pixel_format(item.pixel_format)['family'] in ('yuv', 'yuvj', 'yuva')
+                    for item in visual_clips)):
+        target = matrices[0]
+        return [Filter('scale', [], {'in_color_matrix': clip.color_space, 'out_color_matrix': target,
+                                    'out_range': 'limited'}),
+                Filter('format', [], {'pix_fmts': video.max_pixel_format}),
+                Filter('setparams', [], {'colorspace': target, 'range': 'limited'})]
 
     if clip_pxl_fmt['family'] == video_pxl_fmt['family']:
         return []

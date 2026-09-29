@@ -73,7 +73,9 @@ def test_disjoint_ranges_from_same_input(media, repeat_filename):
         assert_color(actual[index * FPS:(index + 1) * FPS, 16:-16, 16:-16], color)
 
 
-def test_mixed_bt601_h264_8bit_and_bt709_prores_10bit(media):
+@pytest.mark.parametrize('reverse_order', [False, True], ids=['bt601-first', 'bt709-first'])
+@pytest.mark.parametrize('transition', [0, .5], ids=['cut', 'crossfade'])
+def test_mixed_bt601_h264_8bit_and_bt709_prores_10bit(media, reverse_order, transition):
     # Exercise distinct SDR color matrices, bit depths and chroma sampling, not HDR
     # or preservation of low-order 10-bit gradient information.
     low = media.encode('bt601-8bit.mov', quadrants())
@@ -86,9 +88,18 @@ def test_mixed_bt601_h264_8bit_and_bt709_prores_10bit(media):
     assert high['codec_name'] == 'prores'
     assert high['pix_fmt'] == 'yuv422p10le'
     assert high['color_space'] == 'bt709'
-    output = media.process('-T', '0', low, yuv)
-    assert_timeline(media, output, 4, (320, 240))
-    assert media.probe(output)['streams'][0]['pix_fmt'] == 'yuv422p10le'
+    # Check the fixtures independently so a source encoding error cannot look like
+    # a regression in ffswak's handling of mixed color matrices.
+    for source in (low, yuv):
+        frames = media.decode(source)
+        for color, (y, x) in zip(COLORS, [(60, 80), (60, 240), (180, 80), (180, 240)]):
+            assert_color(frames[:, y-20:y+20, x-20:x+20], color)
+    sources = (yuv, low) if reverse_order else (low, yuv)
+    output = media.process('-T', str(transition), *sources)
+    assert_timeline(media, output, 4 - transition, (320, 240))
+    output_info = media.probe(output)['streams'][0]
+    assert output_info['pix_fmt'] == 'yuv422p10le'
+    assert output_info['color_space'] == ('bt709' if reverse_order else 'smpte170m')
     frames = media.decode(output)
     for color, (y, x) in zip(COLORS, [(60, 80), (60, 240), (180, 80), (180, 240)]):
         assert_color(frames[:, y-20:y+20, x-20:x+20], color)
