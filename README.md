@@ -27,20 +27,32 @@ Install [uv](https://docs.astral.sh/uv/):
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-or on OS X:
+Or on macOS:
 
 ```sh
 brew install uv
 ```
 
-Optionally, edit the variables at the top of `ffswak.py` to configure the default output dimensions and default output
-directory.
-
-Then install ffswak with the command:
+Then install ffswak from its [GitHub repository](https://github.com/coppit/ffswak):
 
 ```sh
-uv tool install --python 3.11 .
+uv tool install git+https://github.com/coppit/ffswak.git
 ```
+
+Alternatively, with [pipx](https://pipx.pypa.io/):
+
+```sh
+pipx install git+https://github.com/coppit/ffswak.git
+```
+
+Or with pip:
+
+```sh
+python3 -m pip install git+https://github.com/coppit/ffswak.git
+```
+
+Optionally, edit the variables at the top of `ffswak.py` to configure the default output dimensions and default output
+directory.
 
 Test it out:
 
@@ -175,8 +187,8 @@ each clip). The whitelist includes GPS/location tags for personal-media use, so 
 a video if you do not want to disclose where it was recorded. Alternatively, remove location tags from
 `PRESERVED_METADATA_KEYS` in the script. Run ffprobe on the input and output to compare metadata.
 
-I add features as I need them. Feel free to suggest enhancements at the [github project
-page](https://github.com/coppit/ffswak).
+I add features as I need them. Feel free to suggest enhancements or report problems in the
+[issue tracker](https://github.com/coppit/ffswak/issues).
 
 # Author
 
@@ -189,13 +201,7 @@ interlace-detection policy is adapted from mpv's
 [`TOOLS/idet.sh`](https://github.com/mpv-player/mpv/blob/master/TOOLS/idet.sh), which is GPL-2.0-or-later and therefore
 compatible with GPL-3.0.
 
-# Development tests
+# Development
 
-The pytest harness generates synthetic videos, runs the real CLI, and checks output pixels, timing, mixed pixel formats,
-transitions, and stabilization motion. See [tests/README.md](tests/README.md) for setup, comparison tolerances, review
-artifacts, and known failures.
-
-```sh
-uv sync --group test --group lint
-uv run pytest
-```
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the development setup and checks. The detailed regression-test guide is in
+[tests/README.md](tests/README.md). Maintainers can find release instructions in [DEVELOPMENT.md](DEVELOPMENT.md).

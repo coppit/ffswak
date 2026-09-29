@@ -39,6 +39,18 @@ records and subprocess failures directly, using controlled metadata or small chi
 videos, or personal videos are required. Interlacing detection also uses checked-in GPL-3.0 MKV fixtures; see
 `fixtures/interlacing/SOURCE.md` for their source and license.
 
+On macOS, Homebrew's full build includes the required stabilization filters:
+
+```sh
+brew install ffmpeg-full
+export PATH="$(brew --prefix ffmpeg-full)/bin:$PATH"
+ffmpeg -hide_banner -filters | grep vidstab
+```
+
+Add the PATH setting to your shell startup file to keep using this build in new terminals. `ffmpeg-full` is keg-only,
+so installing it alone does not replace the regular `ffmpeg` on PATH. Both `vidstabdetect` and `vidstabtransform` must
+appear in the filter list. ffswak warns at startup if either is missing; the stabilization test still fails.
+
 ## How the harness works
 
 Pytest discovers the test functions in `test_*.py` and supplies the `media` fixture from `conftest.py`. Each test gets
@@ -119,7 +131,8 @@ Some tests produce richer HEVC output formats that media players may not support
 ## Synthetic unsupported-audio fixture
 
 The stream-selection regression uses a generated MOV with H.264 video, an AAC sine-wave track and an extra four-channel
-silent PCM track. The helper changes only that extra track's MOV sample-entry tag to `apac`. The AAC/video tracks remain
+silent PCM track. The helper changes only that extra track's MOV sample-entry tag (`sowt` or `lpcm`) to the invented
+tag `zzzz`. FFmpeg 9 recognizes `apac`, so it no longer serves as an unknown-codec fixture. The AAC/video tracks remain
 ordinary playable media. This models the unrecognized additional audio stream observed in an iPhone MOV without copying
 any personal media, metadata or packets.  It is not a valid APAC encoding and does not test APAC decoding. A negative
 control verifies that decoding all its audio tracks fails; ffswak must instead select AAC.
@@ -127,3 +140,6 @@ control verifies that decoding all its audio tracks fails; ffswak must instead s
 Both audio-track orders are exercised. If a future FFmpeg build recognizes the synthetic tag, review the fixture rather
 than silently skipping the assertions.  A true APAC interoperability test would require a separately generated or
 sanitized valid APAC sample; this suite has no dependency on the original personal file.
+
+The incompatible-audio conversion test uses built-in `pcm_s16le` encoding in Matroska and verifies conversion to AAC
+in M4A. It requires no optional Vorbis or Opus encoder library.
