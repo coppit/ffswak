@@ -61,7 +61,7 @@ class Media:
         return path
 
     def mux_audio(self, source, frequencies=(440,), *, unsupported_first=None):
-        """Generate all audio. Optional apac-tagged PCM models an undecodable track.
+        """Generate all audio. Optional unknown-tagged PCM models an undecodable track.
 
         This is deliberately not an APAC encoder or a copy of personal audio.
         The MOV remains playable through its default AAC track.
@@ -101,8 +101,11 @@ class Media:
                         entry = start + 16
                         count = int.from_bytes(data[start+12:start+16], 'big')
                         for _ in range(count):
-                            if data[entry+4:entry+8] == b'sowt':
-                                data[entry+4:entry+8] = b'apac'
+                            # FFmpeg can write this PCM track as legacy sowt or
+                            # QuickTime v2 lpcm, depending on its MOV muxer version.
+                            if data[entry+4:entry+8] in (b'sowt', b'lpcm'):
+                                # Use an invented tag: newer FFmpeg recognizes APAC.
+                                data[entry+4:entry+8] = b'zzzz'
                                 changed.append(entry)
                             entry += int.from_bytes(data[entry:entry+4], 'big')
                     start += size

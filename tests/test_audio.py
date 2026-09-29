@@ -27,15 +27,15 @@ def assert_tone(audio, start, end, frequency):
     assert peak == pytest.approx(frequency, abs=4)
 
 
-@pytest.mark.parametrize('unsupported_first', [False, True], ids=['aac-before-apac', 'apac-before-aac'])
-def test_selects_aac_while_ignoring_unsupported_apac_track(media, unsupported_first):
+@pytest.mark.parametrize('unsupported_first', [False, True], ids=['aac-before-unknown', 'unknown-before-aac'])
+def test_selects_aac_while_ignoring_unsupported_track(media, unsupported_first):
     # b5b19db: model the observed iPhone stream layout using only synthetic data.
     source = media.mux_audio(media.encode('scene.mov', quadrants()),
                              unsupported_first=unsupported_first)
     tracks = [s for s in media.streams(source) if s['codec_type'] == 'audio']
     assert len(tracks) == 2
     unknown = tracks[0 if unsupported_first else 1]
-    assert unknown['codec_tag_string'] == 'apac'
+    assert unknown['codec_tag_string'] == 'zzzz'
     assert not unknown.get('codec_name')
     # Negative control: this fixture really rejects decoding all audio streams.
     all_audio = subprocess.run(['ffmpeg', '-v', 'error', '-i', str(source),
@@ -106,10 +106,12 @@ def test_audio_only_input_keeps_audio_and_uses_an_audio_container(media):
 
 
 def test_incompatible_audio_is_reencoded_for_m4a_output(media):
+    # Built-in PCM needs no optional encoder library and cannot be copied to M4A.
     source = media.directory / 'audio-only.mka'
     output = media.directory / 'output.m4a'
     run(['ffmpeg', '-v', 'error', '-y', '-f', 'lavfi', '-i',
-         'sine=frequency=660:sample_rate=48000:duration=2', '-c:a', 'libvorbis', source], cwd=media.directory)
+         'sine=frequency=660:sample_rate=48000:duration=2', '-c:a', 'pcm_s16le', source], cwd=media.directory)
+    assert [stream['codec_name'] for stream in media.streams(source)] == ['pcm_s16le']
 
     run([sys.executable, ROOT / 'ffswak.py', '-o', output, source], cwd=media.directory)
 
