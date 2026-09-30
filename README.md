@@ -1,4 +1,4 @@
-# ffswak.py
+# ffswak
 
 A Python wrapper for `ffmpeg` that simplifies common video editing tasks.
 
@@ -16,8 +16,8 @@ Things you can do:
 Make sure you have ffmpeg and ffprobe installed, and that you have Python 3.11 or newer:
 
 ```sh
-ffmpeg --version
-ffprobe --version
+ffmpeg -version
+ffprobe -version
 python3 --version
 ```
 
@@ -33,26 +33,34 @@ Or on macOS:
 brew install uv
 ```
 
-Then install ffswak from its [GitHub repository](https://github.com/coppit/ffswak):
+Then install ffswak from [PyPI](https://pypi.org/project/ffswak/):
 
 ```sh
-uv tool install git+https://github.com/coppit/ffswak.git
+uv tool install ffswak
 ```
 
 Alternatively, with [pipx](https://pipx.pypa.io/):
 
 ```sh
-pipx install git+https://github.com/coppit/ffswak.git
+pipx install ffswak
 ```
 
-Or with pip:
+Or with pip in a virtual environment:
 
 ```sh
-python3 -m pip install git+https://github.com/coppit/ffswak.git
+python3 -m pip install ffswak
 ```
 
-Optionally, edit the variables at the top of `ffswak.py` to configure the default output dimensions and default output
-directory.
+To try ffswak without installing a persistent command, run it in uv's isolated, cached environment:
+
+```sh
+uvx ffswak --help
+```
+
+FFmpeg and ffprobe must still be installed separately. On macOS, use `ffmpeg-full` for stabilization support; see the
+[FFmpeg setup instructions](https://github.com/coppit/ffswak/blob/main/tests/README.md).
+
+Use `-D` to choose output dimensions and `-O` to choose the output directory.
 
 Test it out:
 
@@ -126,9 +134,9 @@ center of the original image.
 This help message shows all of the options
 
 ```
-usage: ffswak.py [global options] -- [per-file options] input_file [time_ranges ...] [ [per-file options] input_file [time_ranges... ] ... ]
+usage: ffswak [global options] -- [per-file options] input_file [time_ranges ...] [ [per-file options] input_file [time_ranges... ] ... ]
 
-A Python wrapper for ffmpeg that simplies common video editing tasks.
+A Python wrapper for ffmpeg that simplifies common video editing tasks.
 
 TIME FORMAT is [[HH:]MM:]SS[.frac] or NNN[.frac] or .frac. Time ranges do not include
 transition times. A warning will be issued if the end of an input file requires the transition to

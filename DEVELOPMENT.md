@@ -12,8 +12,8 @@ stabilization support and fail if it is missing. These checks do not publish any
 The `Publish to PyPI` workflow builds and publishes when a tag named `v<version>` is pushed. It refuses to publish when
 the tag does not match the version in `pyproject.toml`. It calls the same `Package` workflow and requires all checks to
 pass before publishing. Merely changing the version in `pyproject.toml` and pushing a branch does not publish a release;
-you must push the Git tag separately. Publishing also requires the one-time setup below and any configured environment
-approval.
+you must push the Git tag separately. The project's PyPI trusted publisher is configured for `coppit/ffswak`, workflow
+`publish.yml`, and environment `pypi`. Publishing requires approval in that GitHub environment.
 
 ## Manual package test
 
@@ -54,10 +54,19 @@ command confirms that the installed console script starts; normal operation also
 
 6. Approve the `pypi` GitHub environment, if it requires review. The `Publish to PyPI` workflow then uploads
    the package.
-7. Confirm the new version on PyPI and install it in a clean environment with `pipx install ffswak` or
-   `uv tool install ffswak`.
+7. Confirm the new version on PyPI and test it without a persistent installation:
 
-Until the first release is published, the README documents installation directly from GitHub.
+   ```sh
+   uvx --from 'ffswak==0.1.0' ffswak --help
+   ```
+
+   Replace `0.1.0` with the version just published.
+
+## Documentation updates
+
+Commit and push documentation changes to update the GitHub README and guides. No version bump or release tag is needed.
+PyPI displays the README bundled with the published release, so updating its description requires a new release.
+A documentation-only patch release such as `0.1.1` is sufficient; there is no need to jump to `0.2.0`.
 
 ## Repository links in package metadata
 

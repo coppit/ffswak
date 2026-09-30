@@ -1341,8 +1341,8 @@ def global_options_parser():
     usage = '%(prog)s [global options] -- [per-file options] input_file [time_ranges ...] ' \
         '[ [per-file options] input_file [time_ranges... ] ... ]'
 
-    parser = argparse.ArgumentParser(usage=usage, formatter_class=argparse.RawDescriptionHelpFormatter,
-        description='A Python wrapper for ffmpeg that simplies common video editing tasks.\n\n' \
+    parser = argparse.ArgumentParser(prog='ffswak', usage=usage, formatter_class=argparse.RawDescriptionHelpFormatter,
+        description='A Python wrapper for ffmpeg that simplifies common video editing tasks.\n\n' \
             'TIME FORMAT is [[HH:]MM:]SS[.frac] or NNN[.frac] or .frac. Time ranges do not include\n' \
             'transition times. A warning will be issued if the end of an input file requires the transition to\n' \
             'include part of the specified time range.\n\n' \
