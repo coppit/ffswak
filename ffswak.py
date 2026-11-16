@@ -1855,12 +1855,16 @@ def encoded_file_not_much_smaller(video):
 
     output_size = os.path.getsize(video.output_file)
 
-    if len(video) > 1 or (video[0].start, video[0].end) != (0, video[0].input_duration):
-        input_size = video.estimated_file_size
-        is_estimate = True
-    else:
+    if len(video) == 1 and (video[0].start, video[0].end) == (0, video[0].input_duration):
         input_size = os.path.getsize(video[0].input_file)
-        is_estimate = False
+        comparison = 'original size'
+    elif all(getattr(clip, 'source_packet_size', None) is not None for clip in video) and \
+            sum(clip.source_packet_size for clip in video) > 0:
+        input_size = sum(clip.source_packet_size for clip in video)
+        comparison = 'source media size, excluding container overhead,'
+    else:
+        input_size = video.estimated_file_size
+        comparison = 'estimated original size'
 
     if output_size > input_size:
         smaller_or_larger = 'larger'
@@ -1870,16 +1874,16 @@ def encoded_file_not_much_smaller(video):
         percent_difference = 100 * (input_size - output_size) / input_size
 
     percent_difference_text = f' ({percent_difference:.0f}% {smaller_or_larger} than ' \
-        f'the{" estimated" if is_estimate else ""} original size of {humanize.naturalsize(input_size)})'
+        f'the {comparison} of {humanize.naturalsize(input_size)})'
 
     cprint(f'[violet]Output file size is {humanize.naturalsize(output_size)}{percent_difference_text}[/]')
 
     if output_size > input_size:
-        cprint(f'[yellow1]WARNING[/]: Output file size is LARGER than {"estimated " if is_estimate else ""}'
-            f'input size ({humanize.naturalsize(output_size)} > {humanize.naturalsize(input_size)})')
+        cprint(f'[yellow1]WARNING[/]: Output file size is LARGER than the {comparison} '
+            f'({humanize.naturalsize(output_size)} > {humanize.naturalsize(input_size)})')
     elif percent_difference < WARNING_THRESHOLD:
         cprint(f'[yellow1]WARNING[/]: Output file size is only {percent_difference:.0f}% smaller than '
-            f'the{" estimated" if is_estimate else ""} input size '
+            f'the {comparison} '
             f'({humanize.naturalsize(output_size)} > {humanize.naturalsize(input_size)})')
 
     return output_size > input_size or percent_difference < COPY_THRESHOLD
@@ -2380,7 +2384,8 @@ def build_video_encode_command(video):
     f_previous_video = None
 
     for clip in video:
-        f_input = ffmpeg.input( unique_input_file(clip.input_file) )
+        clip.encode_video_input = unique_input_file(clip.input_file)
+        f_input = ffmpeg.input(clip.encode_video_input)
 
         dprint(f'- Building video pipeline for clip {clip.index}')
 
@@ -2426,7 +2431,8 @@ def build_audio_encode_command(video):
     f_previous_audio = None
 
     for clip in video:
-        f_input = ffmpeg.input( unique_input_file(clip.input_file) )
+        clip.encode_audio_input = unique_input_file(clip.input_file)
+        f_input = ffmpeg.input(clip.encode_audio_input)
 
         dprint(f'- Building audio pipeline for clip {clip.index}')
 
@@ -2659,7 +2665,100 @@ def cleanup_output_file(output_file):
 
 #-----------------------------------------------------------------------------------------------------------------------
 
-def run_ffmpeg(command, output_file, progress=None, progress_callback=None):
+class SourcePacketTally:
+    """Count selected compressed media during encoding, without reopening the inputs.
+
+    A stream-copy framecrc output per clip provides timestamped packet sizes. Separate
+    pipes preserve attribution even when FFmpeg's input and muxer threads interleave.
+    Checksums are ignored; packet records are consumed immediately, never kept in logs.
+    """
+
+    def __init__(self, video, command):
+        self.video = video
+        self.command = list(command)
+        self.readers = {}
+        self.writers = []
+        self.timebases = {}
+        self.sizes = [0] * len(video)
+        self.invalid = set()
+        self.expected_streams = {}
+        self.seen_streams = {}
+        self.intervals = [(FractionBase(str(clip.start)), FractionBase(str(clip.end))) for clip in video]
+
+        try:
+            inputs = [command[i + 1] for i, arg in enumerate(command[:-1]) if arg == '-i']
+
+            for index, clip in enumerate(video):
+                clip.source_packet_size = None
+                streams = []
+                if clip.input_dims is not None and not (clip.video_filters and clip.video_filters[0].name == 'color'):
+                    streams.append(('v:0', getattr(clip, 'encode_video_input', None)))
+                if clip.audio_stream_index is not None and not (clip.audio_filters and clip.audio_filters[0].name == 'anullsrc'):
+                    streams.append((f'a:{clip.audio_stream_index}', getattr(clip, 'encode_audio_input', None)))
+                if not streams:
+                    continue
+                self.expected_streams[index] = len(streams)
+                self.seen_streams[index] = set()
+                reader, writer = os.pipe()
+                self.readers[reader] = index
+                self.writers.append(writer)
+                for stream, input_path in streams:
+                    # Reuse this clip's existing demuxer, rather than extending an earlier
+                    # occurrence of the same file to a later clip's end time.
+                    source_index = next(i for i, path in enumerate(inputs) if
+                        (path == input_path if input_path is not None else
+                         os.path.realpath(path) == os.path.realpath(clip.input_file)))
+                    self.command += ['-map', f'{source_index}:{stream}']
+                self.command += ['-c', 'copy', '-t', str(clip.end), '-avoid_negative_ts', 'disabled',
+                    '-f', 'framecrc', f'pipe:{writer}']
+        except BaseException:
+            self.close()
+            raise
+
+    def consume(self, index, line):
+        try:
+            if line.startswith('#tb '):
+                stream, timebase = line[4:].split(':', 1)
+                self.timebases[index, int(stream)] = FractionBase(timebase.strip())
+            elif line and not line.startswith('#'):
+                stream, _, pts, duration, size, *_ = line.split(',')
+                stream, pts, duration, size = int(stream), int(pts), int(duration), int(size)
+                if pts == -(1 << 63) or size < 0:
+                    raise ValueError('Missing timestamp or invalid packet size')
+                timestamp = pts * self.timebases[index, stream]
+                self.seen_streams[index].add(stream)
+                # Prorate only boundary packets, assuming uniform bytes over their duration.
+                # Keep rational byte totals until finish(), then round once per clip.
+                start, end = self.intervals[index]
+                if duration > 0:
+                    packet_duration = duration * self.timebases[index, stream]
+                    overlap = max(0, min(end, timestamp + packet_duration) - max(start, timestamp))
+                    self.sizes[index] += size * overlap / packet_duration
+                elif start <= timestamp < end:
+                    # Without a usable duration, retain the whole-packet PTS policy.
+                    self.sizes[index] += size
+        except (ValueError, KeyError, ZeroDivisionError):
+            self.invalid.add(index)
+
+    def finish(self):
+        for index, clip in enumerate(self.video):
+            complete = len(self.seen_streams.get(index, ())) == self.expected_streams.get(index, 0)
+            clip.source_packet_size = round(self.sizes[index]) if complete and index not in self.invalid else None
+
+    def close_writers(self):
+        for fd in self.writers:
+            os.close(fd)
+        self.writers.clear()
+
+    def close(self):
+        self.close_writers()
+        for fd in self.readers:
+            os.close(fd)
+        self.readers.clear()
+
+#-----------------------------------------------------------------------------------------------------------------------
+
+def run_ffmpeg(command, output_file, progress=None, progress_callback=None, packet_tally=None):
     # Capture all output in a single buffer
     full_output_buffer = []
 
@@ -2667,7 +2766,11 @@ def run_ffmpeg(command, output_file, progress=None, progress_callback=None):
         command,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        pass_fds=tuple(packet_tally.writers) if packet_tally else (),
     )
+
+    if packet_tally:
+        packet_tally.close_writers()
 
     def sigint_handler(signum, frame):
         if progress:
@@ -2687,7 +2790,21 @@ def run_ffmpeg(command, output_file, progress=None, progress_callback=None):
     # Use a dictionary to map file descriptors to streams and a buffer to store output
     stdout_fd, stderr_fd = process.stdout.fileno(), process.stderr.fileno()
     pipes = { stdout_fd: "stdout", stderr_fd: "stderr", }
-    partial_lines = {stdout_fd: '', stderr_fd: ''}
+
+    if packet_tally:
+        pipes.update({fd: index for fd, index in packet_tally.readers.items()})
+
+    partial_lines = {fd: '' for fd in pipes}
+
+    def handle_line(stream_type, line):
+        if isinstance(stream_type, int):
+            packet_tally.consume(stream_type, line)
+            return
+
+        full_output_buffer.append((line, stream_type))
+
+        if progress_callback is not None:
+            progress_callback(stream_type, line)
 
     try:
         # Keep polling until each pipe reaches EOF. Clearing the pipe list merely because ffmpeg has exited can lose
@@ -2701,8 +2818,13 @@ def run_ffmpeg(command, output_file, progress=None, progress_callback=None):
                 chunk = os.read(fd, 4096).decode('utf-8', errors='replace')
 
                 if not chunk:
-                    # End of stream
+                    # Flush the final record even when it has no trailing newline.
+                    if partial_lines[fd]:
+                        handle_line(pipes[fd], partial_lines[fd])
+                        partial_lines[fd] = ''
+
                     pipes.pop(fd, None)
+
                     continue
 
                 # So that I can process each line of the progress
@@ -2715,20 +2837,9 @@ def run_ffmpeg(command, output_file, progress=None, progress_callback=None):
                 for line in lines[:-1]:
                     stream_type = pipes[fd]
 
-                    # Store the line and its source
-                    full_output_buffer.append((line, stream_type))
-
-                    # The progress output from ffmpeg is on stderr, so check for that
-                    if progress_callback is not None:
-                        progress_callback(stream_type, line)
+                    handle_line(stream_type, line)
 
                 partial_lines[fd] = lines[-1]
-
-        # After the process exits, store any unterminated final output line.
-        if partial_lines[stdout_fd]:
-            full_output_buffer.append((partial_lines[stdout_fd], "stdout"))
-        if partial_lines[stderr_fd]:
-            full_output_buffer.append((partial_lines[stderr_fd], "stderr"))
 
         return_code = process.wait()
 
@@ -2782,7 +2893,7 @@ class TimeDescription(ProgressColumn):
 
 #-----------------------------------------------------------------------------------------------------------------------
 
-def run_ffmpeg_with_progress(command, description, output_file, target_seconds, show_time):
+def run_ffmpeg_with_progress(command, description, output_file, target_seconds, show_time, packet_tally=None):
     # Capture all output in a single buffer
     full_output_buffer = []
 
@@ -2810,7 +2921,7 @@ def run_ffmpeg_with_progress(command, description, output_file, target_seconds, 
 
             progress.update(task, completed=completed)
 
-        ffmpeg_stdout, ffmpeg_stderr = run_ffmpeg(command, output_file, progress, progress_callback)
+        ffmpeg_stdout, ffmpeg_stderr = run_ffmpeg(command, output_file, progress, progress_callback, packet_tally)
 
         progress.update(task, completed=target_seconds)
 
@@ -2908,8 +3019,16 @@ def encode_video(video):
         dprint('<Skipping ffmpeg encoding command>')
         return
 
-    run_ffmpeg_with_progress(compile_output_command(f_output, video, overwrite_output=True), 'Running ffmpeg to encode video...',
-        video.output_file, video.output_duration, True)
+    command = compile_output_command(f_output, video, overwrite_output=True)
+
+    tally = SourcePacketTally(video, command)
+
+    try:
+        run_ffmpeg_with_progress(tally.command, 'Running ffmpeg to encode video...',
+            video.output_file, video.output_duration, True, packet_tally=tally)
+        tally.finish()
+    finally:
+        tally.close()
 
     os.utime(video.output_file,
         (os.path.getatime(video[0].input_file), parse_to_dtu(video.output_creation_time).timestamp()))
