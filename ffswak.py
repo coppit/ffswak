@@ -3083,19 +3083,26 @@ def check_external_programs():
             'Install FFmpeg and ensure both ffmpeg and ffprobe are available on PATH.')
         sys.exit(1)
 
+#-----------------------------------------------------------------------------------------------------------------------
+
+def check_stabilization_support(video):
+    if not any(clip.stabilize for clip in video):
+        return
+
     try:
         result = subprocess.run([FFMPEG, '-hide_banner', '-filters'],
             capture_output=True, text=True, check=True, timeout=10)
     except (OSError, subprocess.SubprocessError) as error:
-        eprint(f'[yellow1]WARNING[/]: Cannot check FFmpeg stabilization support: {error}')
-        return
+        eprint(f'[red]Error[/]: Cannot check FFmpeg stabilization support: {error}')
+        sys.exit(1)
 
     filters = {fields[1] for line in result.stdout.splitlines() if len(fields := line.split()) >= 2}
     missing_filters = [name for name in ('vidstabdetect', 'vidstabtransform') if name not in filters]
     if missing_filters:
-        eprint(f'[yellow1]WARNING[/]: FFmpeg is missing stabilization filter(s): {", ".join(missing_filters)}. '
+        eprint(f'[red]Error[/]: FFmpeg is missing stabilization filter(s): {", ".join(missing_filters)}. '
             'Stabilization (-s/--stabilize or -t/--tripod) requires FFmpeg built with libvidstab. '
             'On macOS, run "brew install ffmpeg-full" and put its bin directory first on PATH.')
+        sys.exit(1)
 
 #-----------------------------------------------------------------------------------------------------------------------
 
@@ -3105,6 +3112,7 @@ def main():
         check_external_programs()
 
     video = parse_arguments()
+    check_stabilization_support(video)
 
     prepare(video)
 

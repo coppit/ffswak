@@ -279,32 +279,45 @@ def test_missing_external_programs_produces_an_actionable_error(app, monkeypatch
     ('vidstabtransform', ['vidstabdetect']),
     ('vidstabdetect vidstabtransform', []),
 ])
-def test_external_program_check_warns_about_missing_stabilization(app, monkeypatch, filters, missing):
+def test_stabilization_check_requires_vidstab_when_requested(app, monkeypatch, filters, missing):
     messages = []
-    monkeypatch.setattr(app.shutil, 'which', lambda program: '/usr/bin/' + program)
     monkeypatch.setattr(app.subprocess, 'run', lambda *args, **kwargs: SimpleNamespace(
         stdout='\n'.join(f' ... {name} V->V Stabilize video' for name in filters.split())))
     monkeypatch.setattr(app, 'eprint', messages.append)
-    app.check_external_programs()
     if missing:
+        with pytest.raises(SystemExit) as error:
+            app.check_stabilization_support([SimpleNamespace(stabilize=True)])
+        assert error.value.code == 1
         assert len(messages) == 1
         assert ', '.join(missing) in messages[0]
         assert 'libvidstab' in messages[0]
         assert 'ffmpeg-full' in messages[0]
     else:
+        app.check_stabilization_support([SimpleNamespace(stabilize=True)])
         assert messages == []
 
 
-def test_external_program_check_warns_if_filter_query_fails(app, monkeypatch):
+def test_stabilization_check_is_silent_when_not_requested(app, monkeypatch):
     messages = []
-    monkeypatch.setattr(app.shutil, 'which', lambda program: '/usr/bin/' + program)
+    monkeypatch.setattr(app.subprocess, 'run', lambda *args, **kwargs: pytest.fail('unexpected filter query'))
+    monkeypatch.setattr(app, 'eprint', messages.append)
+
+    app.check_stabilization_support([SimpleNamespace(stabilize=False)])
+
+    assert messages == []
+
+
+def test_stabilization_check_errors_if_filter_query_fails(app, monkeypatch):
+    messages = []
 
     def fail(*args, **kwargs):
         raise app.subprocess.TimeoutExpired(args[0], 10)
 
     monkeypatch.setattr(app.subprocess, 'run', fail)
     monkeypatch.setattr(app, 'eprint', messages.append)
-    app.check_external_programs()
+    with pytest.raises(SystemExit) as error:
+        app.check_stabilization_support([SimpleNamespace(stabilize=True)])
+    assert error.value.code == 1
     assert len(messages) == 1
     assert 'Cannot check FFmpeg stabilization support' in messages[0]
 
