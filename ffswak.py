@@ -337,6 +337,7 @@ def dprint(*args, **kwargs):
     dprint.pending = ''
 
     prefix = kwargs.pop('prefix', '')
+    paths = kwargs.pop('paths', ())
 
     for line in lines:
         if line.endswith("\n"):
@@ -345,9 +346,21 @@ def dprint(*args, **kwargs):
 
             do_highlight = '<' not in line
 
-            # Let Rich highlight the rest, but disable markup parsing
             line = prefix + line.rstrip('\n')
             highlighted = CONSOLE.render_str(line, markup=False, highlight=do_highlight)
+
+            # Rich's syntax highlighter splits paths containing spaces into differently styled tokens.  Apply the path
+            # style after highlighting so each requested path remains a single color while the rest stays highlighted.
+            for path in paths:
+                path = str(path)
+                start = 0
+                while (start := line.find(path, start)) != -1:
+                    path_end = start + len(path)
+                    highlighted.spans[:] = [span for span in highlighted.spans
+                                            if span.end <= start or span.start >= path_end]
+                    highlighted.stylize('repr.path', start, path_end)
+                    start = path_end
+
             t += highlighted
 
             cprint(t, end=end, **kwargs, soft_wrap=True)
@@ -386,7 +399,8 @@ class Video(list):
             prev_clip = self[clip.index-1]
             transition_duration = clip.transition_duration
 
-            dprint(f'- Before: {prev_clip} --> {clip.transition_duration} s transition --> {clip}')
+            dprint(f'- Before: {prev_clip} --> {clip.transition_duration} s transition --> {clip}',
+                   paths=[os.path.basename(prev_clip.input_file), os.path.basename(clip.input_file)])
 
 #            dprint(f'  - Adjusting end of clip {clip.index-1} and start of clip {clip.index} for transition {clip.index}')
 
@@ -441,7 +455,8 @@ class Video(list):
             else:
                 clip.start = clip_adjusted_start
 
-            dprint(f'- After: {prev_clip} --> {clip.transition_duration} s transition --> {clip}')
+            dprint(f'- After: {prev_clip} --> {clip.transition_duration} s transition --> {clip}',
+                   paths=[os.path.basename(prev_clip.input_file), os.path.basename(clip.input_file)])
 
         # Smooth adjacent ranges from the same source. When two clips are right next to each other, the first clip's
         # transition can include part of the next clip, and vice versa. This creates a very odd effect. In this case,
@@ -483,7 +498,8 @@ class Video(list):
                 cprint(f'[yellow1]WARNING[/]: {old_clips[prev_clip.index]} is very close to '
                     f'{old_clips[clip.index]}. Consider merging them.')
                 dprint(f'- Smoothing the transition')
-                dprint(f'  - Before: {prev_clip} --> {clip.transition_duration} s transition --> {clip}')
+                dprint(f'  - Before: {prev_clip} --> {clip.transition_duration} s transition --> {clip}',
+                       paths=[os.path.basename(prev_clip.input_file), os.path.basename(clip.input_file)])
 
             if prev_clip.reverse:
                 prev_clip.start += end_adjustment
@@ -496,7 +512,8 @@ class Video(list):
                 clip.start += start_adjustment
 
             if adjustment > 0:
-                dprint(f'  - After: {prev_clip} --> {clip.transition_duration} s transition --> {clip}')
+                dprint(f'  - After: {prev_clip} --> {clip.transition_duration} s transition --> {clip}',
+                       paths=[os.path.basename(prev_clip.input_file), os.path.basename(clip.input_file)])
 
         # xfade and acrossfade cannot run longer than either input. Padding above can often make room for the requested
         # transition, but clips at file boundaries can still be shorter than it.
@@ -844,7 +861,7 @@ class Video(list):
         output_duration = 0
 
         for clip in self:
-            dprint(f'- {clip}')
+            dprint(f'- {clip}', paths=[os.path.basename(clip.input_file)])
 
             # Don't double-count the transitions
             next_transition_duration = 0 if clip.index == len(self)-1 else self[clip.index+1].transition_duration
@@ -873,7 +890,7 @@ class Video(list):
         estimated_file_size = 0
 
         for clip in self:
-            dprint(f'- {clip}')
+            dprint(f'- {clip}', paths=[os.path.basename(clip.input_file)])
 
             # Don't double-count the transitions
             next_transition_duration = 0 if clip.index == len(self)-1 else self[clip.index+1].transition_duration
@@ -1246,7 +1263,7 @@ def encoder_pixel_formats(ffmpeg_command, encoder):
 
 @lru_cache
 def ffprobe(input_file):
-    dprint(f'  - Calling ffprobe to fetch video properties from {input_file}', style='violet')
+    dprint(f'  - Calling ffprobe to fetch video properties from {input_file}', style='violet', paths=[input_file])
 
     return ffmpeg.probe(input_file)
 
@@ -1802,7 +1819,7 @@ def parse_arguments():
     video.output_duration
 
     dprint(f'Video information:')
-    dprint(str(video), prefix='- ')
+    dprint(str(video), prefix='- ', paths=[video.output_file])
 
     dprint(f'Video Clips:')
     dprint(pformat([vars(f) for f in video], width=CONSOLE.width))
@@ -2368,7 +2385,7 @@ def build_video_encode_command(video):
         dprint(f'- Building video pipeline for clip {clip.index}')
 
         if clip.video_filters == [] or clip.video_filters[0].name != 'color':
-            dprint(f'  - Video: Using input file {clip.input_file}')
+            dprint(f'  - Video: Using input file {clip.input_file}', paths=[clip.input_file])
 
             f_video = f_input.video
             video_filters = clip.video_filters
@@ -2418,7 +2435,7 @@ def build_audio_encode_command(video):
             continue
 
         if clip.audio_filters == [] or clip.audio_filters[0].name != 'anullsrc':
-            dprint(f'  - Audio: Using input file {clip.input_file}')
+            dprint(f'  - Audio: Using input file {clip.input_file}', paths=[clip.input_file])
 
             f_audio = f_input[f'a:{clip.audio_stream_index}']
             audio_filters = clip.audio_filters

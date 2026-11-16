@@ -43,6 +43,25 @@ def test_encoder_pixel_formats_are_cached_per_encoder(app, monkeypatch):
     assert len(calls) == 2
 
 
+def test_debug_output_applies_one_style_to_paths_with_spaces(app, monkeypatch):
+    messages = []
+    monkeypatch.setattr(app, '_debug', True)
+    monkeypatch.delattr(app.dprint, 'pending', raising=False)
+    monkeypatch.setattr(app, 'cprint', lambda text, **kwargs: messages.append((text, kwargs)))
+
+    path = '/tmp/a file with spaces 2026.mp4'
+    app.dprint(f'Calling ffprobe for {path}', paths=[path])
+
+    message, kwargs = messages[0]
+    path_start = message.plain.index(path)
+    path_end = path_start + len(path)
+    path_spans = [span for span in message.spans if span.start < path_end and span.end > path_start]
+    assert any(span.start == path_start and span.end == path_end and span.style == 'repr.path'
+               for span in message.spans)
+    assert len(path_spans) == 1
+    assert kwargs['end'] == '\n'
+
+
 def test_encoder_without_pixel_formats_reports_error(app, monkeypatch):
     monkeypatch.setattr(app.subprocess, 'run', lambda *args, **kwargs:
         SimpleNamespace(stdout="Codec 'missing' is not recognized by FFmpeg.\n", stderr=''))
