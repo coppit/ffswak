@@ -83,7 +83,7 @@ def test_packet_boundary_policy_and_missing_timestamps(app):
 
 
 @pytest.mark.parametrize('packet_size, expected_copy, label', [
-    (200, False, 'source media size (excluding container overhead)'),
+    (200, False, 'source media size, excluding container overhead'),
     (None, True, 'estimated original size'),
 ])
 def test_size_comparison_uses_packet_total_or_estimate(app, tmp_path, monkeypatch,
